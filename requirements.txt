@@ -1,0 +1,16 @@
+# Core dependencies
+aiohttp
+aiofiles
+click
+rich
+humanfriendly
+
+# Features
+pyperclip
+
+# Development dependencies
+pytest
+pytest-asyncio
+black
+flake8
+mypy
