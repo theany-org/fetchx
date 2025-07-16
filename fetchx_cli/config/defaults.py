@@ -9,7 +9,7 @@ DEFAULT_SESSION_DIR = os.path.join(Path.home(), ".fetchx_idm", "sessions")
 DEFAULT_LOG_DIR = os.path.join(Path.home(), ".fetchx_idm", "logs")
 
 # Default download settings
-DEFAULT_MAX_CONNECTIONS = 16
+DEFAULT_MAX_CONNECTIONS = 8
 DEFAULT_CHUNK_SIZE = 1024 * 1024  # 1MB
 DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_RETRIES = 3
