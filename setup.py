@@ -11,7 +11,11 @@ requirements = []
 for line in lines:
     line = line.strip()
     # Skip comments, empty lines, and development dependencies
-    if line and not line.startswith("#") and line not in ["pytest", "pytest-asyncio", "black", "flake8", "mypy"]:
+    if (
+        line
+        and not line.startswith("#")
+        and line not in ["pytest", "pytest-asyncio", "black", "flake8", "mypy"]
+    ):
         requirements.append(line)
 
 setup(

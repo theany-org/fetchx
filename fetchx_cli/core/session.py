@@ -9,9 +9,11 @@ from fetchx_cli.core.database import get_database
 from fetchx_cli.utils.exceptions import SessionException
 from fetchx_cli.config.settings import get_config
 
+
 @dataclass
 class SessionData:
     """Represents a download session."""
+
     session_id: str
     url: str
     download_info: Dict[str, Any]
@@ -27,9 +29,10 @@ class SessionData:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'SessionData':
+    def from_dict(cls, data: Dict[str, Any]) -> "SessionData":
         """Create from dictionary."""
         return cls(**data)
+
 
 class SessionManager:
     """Manages download sessions for persistence using SQLite."""
@@ -38,19 +41,25 @@ class SessionManager:
         self.config = get_config().config
         self.db = get_database()
 
-    def create_session(self, session_id: str, url: str, download_info: DownloadInfo,
-                      segments: List[DownloadSegment], headers: Optional[Dict[str, str]] = None) -> SessionData:
+    def create_session(
+        self,
+        session_id: str,
+        url: str,
+        download_info: DownloadInfo,
+        segments: List[DownloadSegment],
+        headers: Optional[Dict[str, str]] = None,
+    ) -> SessionData:
         """Create a new download session."""
         session_data = {
-            'session_id': session_id,
-            'url': url,
-            'download_info': asdict(download_info) if download_info else {},
-            'segments': [asdict(segment) for segment in segments],
-            'stats': asdict(DownloadStats()),
-            'created_at': time.time(),
-            'updated_at': time.time(),
-            'status': 'active',
-            'headers': headers or {}
+            "session_id": session_id,
+            "url": url,
+            "download_info": asdict(download_info) if download_info else {},
+            "segments": [asdict(segment) for segment in segments],
+            "stats": asdict(DownloadStats()),
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "status": "active",
+            "headers": headers or {},
         }
 
         try:
@@ -59,21 +68,25 @@ class SessionManager:
         except Exception as e:
             raise SessionException(f"Failed to create session: {e}")
 
-    def update_session(self, session_id: str, stats: Optional[DownloadStats] = None,
-                      segments: Optional[List[DownloadSegment]] = None,
-                      status: Optional[str] = None) -> bool:
+    def update_session(
+        self,
+        session_id: str,
+        stats: Optional[DownloadStats] = None,
+        segments: Optional[List[DownloadSegment]] = None,
+        status: Optional[str] = None,
+    ) -> bool:
         """Update an existing session."""
         try:
             updates = {}
 
             if stats:
-                updates['stats'] = asdict(stats)
+                updates["stats"] = asdict(stats)
 
             if segments:
-                updates['segments'] = [asdict(segment) for segment in segments]
+                updates["segments"] = [asdict(segment) for segment in segments]
 
             if status:
-                updates['status'] = status
+                updates["status"] = status
 
             if updates:
                 return self.db.update_session(session_id, updates)
@@ -119,11 +132,13 @@ class SessionManager:
         try:
             sessions = self.list_sessions()
             stats = {
-                'total_sessions': len(sessions),
-                'active_sessions': len([s for s in sessions if s.status == 'active']),
-                'completed_sessions': len([s for s in sessions if s.status == 'completed']),
-                'failed_sessions': len([s for s in sessions if s.status == 'failed']),
-                'paused_sessions': len([s for s in sessions if s.status == 'paused'])
+                "total_sessions": len(sessions),
+                "active_sessions": len([s for s in sessions if s.status == "active"]),
+                "completed_sessions": len(
+                    [s for s in sessions if s.status == "completed"]
+                ),
+                "failed_sessions": len([s for s in sessions if s.status == "failed"]),
+                "paused_sessions": len([s for s in sessions if s.status == "paused"]),
             }
             return stats
         except Exception as e:
@@ -131,26 +146,28 @@ class SessionManager:
 
     def pause_session(self, session_id: str) -> bool:
         """Mark session as paused."""
-        return self.update_session(session_id, status='paused')
+        return self.update_session(session_id, status="paused")
 
     def resume_session(self, session_id: str) -> bool:
         """Mark session as active."""
-        return self.update_session(session_id, status='active')
+        return self.update_session(session_id, status="active")
 
     def complete_session(self, session_id: str) -> bool:
         """Mark session as completed."""
-        return self.update_session(session_id, status='completed')
+        return self.update_session(session_id, status="completed")
 
-    def fail_session(self, session_id: str, error_message: Optional[str] = None) -> bool:
+    def fail_session(
+        self, session_id: str, error_message: Optional[str] = None
+    ) -> bool:
         """Mark session as failed."""
-        updates = {'status': 'failed'}
+        updates = {"status": "failed"}
         if error_message:
             # Store error message in stats
             session = self.get_session(session_id)
             if session:
                 stats = session.stats.copy()
-                stats['error_message'] = error_message
-                updates['stats'] = stats
+                stats["error_message"] = error_message
+                updates["stats"] = stats
 
         try:
             return self.db.update_session(session_id, updates)
@@ -159,11 +176,11 @@ class SessionManager:
 
     def get_active_sessions(self) -> List[SessionData]:
         """Get all active sessions."""
-        return self.list_sessions('active')
+        return self.list_sessions("active")
 
     def get_resumable_sessions(self) -> List[SessionData]:
         """Get sessions that can be resumed."""
-        return self.list_sessions('paused')
+        return self.list_sessions("paused")
 
     def session_exists(self, session_id: str) -> bool:
         """Check if session exists."""

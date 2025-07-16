@@ -12,8 +12,10 @@ from fetchx_cli.core.database import get_database
 from fetchx_cli.config.settings import get_config
 from fetchx_cli.utils.exceptions import QueueException
 
+
 class DownloadStatus(Enum):
     """Download status enumeration."""
+
     QUEUED = "queued"
     DOWNLOADING = "downloading"
     PAUSED = "paused"
@@ -21,9 +23,11 @@ class DownloadStatus(Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
 
+
 @dataclass
 class QueueItem:
     """Represents an item in the download queue."""
+
     id: str
     url: str
     filename: Optional[str] = None
@@ -51,12 +55,13 @@ class QueueItem:
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'QueueItem':
+    def from_dict(cls, data: Dict[str, Any]) -> "QueueItem":
         """Create from dictionary."""
         # Convert status string back to enum
-        if 'status' in data:
-            data['status'] = DownloadStatus(data['status'])
+        if "status" in data:
+            data["status"] = DownloadStatus(data["status"])
         return cls(**data)
+
 
 class QueueManager:
     """SQLite-based queue manager."""
@@ -94,8 +99,8 @@ class QueueManager:
         """Update item properties."""
         try:
             # Convert enum to string if needed
-            if 'status' in kwargs and isinstance(kwargs['status'], DownloadStatus):
-                kwargs['status'] = kwargs['status'].value
+            if "status" in kwargs and isinstance(kwargs["status"], DownloadStatus):
+                kwargs["status"] = kwargs["status"].value
 
             return self.db.update_queue_item(item_id, kwargs)
         except Exception as e:
@@ -117,6 +122,7 @@ class QueueManager:
         except Exception as e:
             raise QueueException(f"Failed to get queue stats: {e}")
 
+
 class DownloadQueue:
     """Manages download queue and concurrent downloads."""
 
@@ -136,9 +142,14 @@ class DownloadQueue:
         """Add progress callback for queue updates."""
         self._progress_callbacks.append(callback)
 
-    def add_download(self, url: str, filename: Optional[str] = None,
-                    output_dir: Optional[str] = None, headers: Optional[Dict[str, str]] = None,
-                    max_connections: Optional[int] = None) -> str:
+    def add_download(
+        self,
+        url: str,
+        filename: Optional[str] = None,
+        output_dir: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        max_connections: Optional[int] = None,
+    ) -> str:
         """Add a download to the queue."""
         item_id = str(uuid.uuid4())
 
@@ -148,7 +159,7 @@ class DownloadQueue:
             filename=filename,
             output_dir=output_dir,
             headers=headers or {},
-            max_connections=max_connections
+            max_connections=max_connections,
         )
 
         self.queue_manager.add_item(item)
@@ -158,7 +169,9 @@ class DownloadQueue:
     def remove_download(self, item_id: str) -> bool:
         """Remove a download from the queue."""
         # Cancel if currently downloading
-        if item_id in self._active_downloads or any(item_id.startswith(aid) for aid in self._active_downloads.keys()):
+        if item_id in self._active_downloads or any(
+            item_id.startswith(aid) for aid in self._active_downloads.keys()
+        ):
             self.cancel_download(item_id)
 
         # Remove from database
@@ -184,9 +197,7 @@ class DownloadQueue:
 
         # Update item status
         success = self.queue_manager.update_item(
-            item_id,
-            status=DownloadStatus.CANCELLED,
-            completed_at=time.time()
+            item_id, status=DownloadStatus.CANCELLED, completed_at=time.time()
         )
 
         if success:
@@ -197,14 +208,16 @@ class DownloadQueue:
         """Get download item by ID."""
         return self.queue_manager.get_item(item_id)
 
-    def list_downloads(self, status: Optional[DownloadStatus] = None) -> List[QueueItem]:
+    def list_downloads(
+        self, status: Optional[DownloadStatus] = None
+    ) -> List[QueueItem]:
         """List downloads, optionally filtered by status."""
         return self.queue_manager.list_items(status)
 
     def get_queue_stats(self) -> Dict[str, Any]:
         """Get queue statistics."""
         stats = self.queue_manager.get_stats()
-        stats['max_concurrent'] = self._max_concurrent
+        stats["max_concurrent"] = self._max_concurrent
         return stats
 
     async def start_queue(self):
@@ -246,8 +259,10 @@ class DownloadQueue:
         while self._is_running:
             try:
                 # Start new downloads if under concurrent limit
-                while (len(self._active_downloads) < self._max_concurrent and
-                       self._has_queued_downloads()):
+                while (
+                    len(self._active_downloads) < self._max_concurrent
+                    and self._has_queued_downloads()
+                ):
 
                     item = self._get_next_queued_item()
                     if item:
@@ -283,26 +298,24 @@ class DownloadQueue:
                 url=item.url,
                 output_dir=item.output_dir,
                 filename=item.filename,
-                headers=item.headers
+                headers=item.headers,
             )
 
             # Add progress callback
             downloader.add_progress_callback(
-                lambda stats, item_id=item.id: self._update_item_progress(item_id, stats)
+                lambda stats, item_id=item.id: self._update_item_progress(
+                    item_id, stats
+                )
             )
 
             # Update item status
             self.queue_manager.update_item(
-                item.id,
-                status=DownloadStatus.DOWNLOADING,
-                started_at=time.time()
+                item.id, status=DownloadStatus.DOWNLOADING, started_at=time.time()
             )
 
             # Store downloader and create task
             self._active_downloads[item.id] = downloader
-            task = asyncio.create_task(
-                self._download_wrapper(item, downloader)
-            )
+            task = asyncio.create_task(self._download_wrapper(item, downloader))
             self._download_tasks[item.id] = task
 
             self._notify_progress()
@@ -312,7 +325,7 @@ class DownloadQueue:
                 item.id,
                 status=DownloadStatus.FAILED,
                 error_message=str(e),
-                completed_at=time.time()
+                completed_at=time.time(),
             )
             self._notify_progress()
 
@@ -327,14 +340,12 @@ class DownloadQueue:
                 status=DownloadStatus.COMPLETED,
                 file_path=file_path,
                 completed_at=time.time(),
-                progress_percentage=100.0
+                progress_percentage=100.0,
             )
 
         except asyncio.CancelledError:
             self.queue_manager.update_item(
-                item.id,
-                status=DownloadStatus.CANCELLED,
-                completed_at=time.time()
+                item.id, status=DownloadStatus.CANCELLED, completed_at=time.time()
             )
             raise
 
@@ -343,7 +354,7 @@ class DownloadQueue:
                 item.id,
                 status=DownloadStatus.FAILED,
                 error_message=str(e),
-                completed_at=time.time()
+                completed_at=time.time(),
             )
 
         finally:
@@ -373,7 +384,7 @@ class DownloadQueue:
             item_id,
             progress_percentage=stats.progress_percentage,
             download_speed=stats.speed,
-            eta=stats.eta
+            eta=stats.eta,
         )
         self._notify_progress()
 

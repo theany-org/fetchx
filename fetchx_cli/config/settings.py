@@ -7,9 +7,11 @@ from pathlib import Path
 from fetchx_cli.core.database import get_database
 from .defaults import *
 
+
 @dataclass
 class DownloadSettings:
     """Download-specific settings."""
+
     max_connections: int = DEFAULT_MAX_CONNECTIONS
     chunk_size: int = DEFAULT_CHUNK_SIZE
     timeout: int = DEFAULT_TIMEOUT
@@ -19,30 +21,38 @@ class DownloadSettings:
     connect_timeout: int = DEFAULT_CONNECT_TIMEOUT
     read_timeout: int = DEFAULT_READ_TIMEOUT
 
+
 @dataclass
 class DisplaySettings:
     """Display and progress settings."""
+
     progress_update_interval: float = DEFAULT_PROGRESS_UPDATE_INTERVAL
     show_speed: bool = DEFAULT_SHOW_SPEED
     show_eta: bool = DEFAULT_SHOW_ETA
     show_percentage: bool = DEFAULT_SHOW_PERCENTAGE
 
+
 @dataclass
 class QueueSettings:
     """Queue management settings."""
+
     max_concurrent_downloads: int = DEFAULT_MAX_CONCURRENT_DOWNLOADS
     save_interval: int = DEFAULT_QUEUE_SAVE_INTERVAL
+
 
 @dataclass
 class PathSettings:
     """Path and directory settings."""
+
     download_dir: str = DEFAULT_DOWNLOAD_DIR
     session_dir: str = DEFAULT_SESSION_DIR
     log_dir: str = DEFAULT_LOG_DIR
 
+
 @dataclass
 class AppConfig:
     """Main application configuration."""
+
     download: DownloadSettings
     display: DisplaySettings
     queue: QueueSettings
@@ -53,6 +63,7 @@ class AppConfig:
         self.display = DisplaySettings()
         self.queue = QueueSettings()
         self.paths = PathSettings()
+
 
 class ConfigManager:
     """Manages application configuration using SQLite."""
@@ -72,29 +83,29 @@ class ConfigManager:
             config = AppConfig()
 
             # Load download settings
-            if 'download' in all_settings:
-                download_data = all_settings['download']
+            if "download" in all_settings:
+                download_data = all_settings["download"]
                 for key, value in download_data.items():
                     if hasattr(config.download, key):
                         setattr(config.download, key, value)
 
             # Load display settings
-            if 'display' in all_settings:
-                display_data = all_settings['display']
+            if "display" in all_settings:
+                display_data = all_settings["display"]
                 for key, value in display_data.items():
                     if hasattr(config.display, key):
                         setattr(config.display, key, value)
 
             # Load queue settings
-            if 'queue' in all_settings:
-                queue_data = all_settings['queue']
+            if "queue" in all_settings:
+                queue_data = all_settings["queue"]
                 for key, value in queue_data.items():
                     if hasattr(config.queue, key):
                         setattr(config.queue, key, value)
 
             # Load path settings
-            if 'paths' in all_settings:
-                paths_data = all_settings['paths']
+            if "paths" in all_settings:
+                paths_data = all_settings["paths"]
                 for key, value in paths_data.items():
                     if hasattr(config.paths, key):
                         setattr(config.paths, key, value)
@@ -120,22 +131,22 @@ class ConfigManager:
             # Save download settings
             download_dict = asdict(config.download)
             for key, value in download_dict.items():
-                self.db.set_setting('download', key, value)
+                self.db.set_setting("download", key, value)
 
             # Save display settings
             display_dict = asdict(config.display)
             for key, value in display_dict.items():
-                self.db.set_setting('display', key, value)
+                self.db.set_setting("display", key, value)
 
             # Save queue settings
             queue_dict = asdict(config.queue)
             for key, value in queue_dict.items():
-                self.db.set_setting('queue', key, value)
+                self.db.set_setting("queue", key, value)
 
             # Save path settings
             paths_dict = asdict(config.paths)
             for key, value in paths_dict.items():
-                self.db.set_setting('paths', key, value)
+                self.db.set_setting("paths", key, value)
 
         except Exception as e:
             print(f"Warning: Could not save default config: {e}")
@@ -150,10 +161,10 @@ class ConfigManager:
     def _config_to_dict(self) -> Dict[str, Any]:
         """Convert config object to dictionary."""
         return {
-            'download': asdict(self.config.download),
-            'display': asdict(self.config.display),
-            'queue': asdict(self.config.queue),
-            'paths': asdict(self.config.paths)
+            "download": asdict(self.config.download),
+            "display": asdict(self.config.display),
+            "queue": asdict(self.config.queue),
+            "paths": asdict(self.config.paths),
         }
 
     def _ensure_directories(self) -> None:
@@ -161,7 +172,7 @@ class ConfigManager:
         directories = [
             self.config.paths.download_dir,
             self.config.paths.session_dir,  # Still needed for compatibility
-            self.config.paths.log_dir       # Still needed for compatibility
+            self.config.paths.log_dir,  # Still needed for compatibility
         ]
 
         for directory in directories:
@@ -187,7 +198,7 @@ class ConfigManager:
             # Convert value to correct type
             if isinstance(current_value, bool):
                 if isinstance(value, str):
-                    value = value.lower() in ('true', '1', 'yes', 'on')
+                    value = value.lower() in ("true", "1", "yes", "on")
             elif isinstance(current_value, int):
                 value = int(value)
             elif isinstance(current_value, float):
@@ -257,7 +268,9 @@ class ConfigManager:
                         try:
                             self.update_setting(section, key, value)
                         except ValueError as e:
-                            print(f"Warning: Skipping invalid setting {section}.{key}: {e}")
+                            print(
+                                f"Warning: Skipping invalid setting {section}.{key}: {e}"
+                            )
                 else:
                     print(f"Warning: Unknown section {section}, skipping")
 
@@ -269,9 +282,9 @@ class ConfigManager:
         results = {}
 
         paths_to_check = {
-            'download_dir': self.config.paths.download_dir,
-            'session_dir': self.config.paths.session_dir,
-            'log_dir': self.config.paths.log_dir
+            "download_dir": self.config.paths.download_dir,
+            "session_dir": self.config.paths.session_dir,
+            "log_dir": self.config.paths.log_dir,
         }
 
         for name, path in paths_to_check.items():
@@ -280,9 +293,9 @@ class ConfigManager:
                 os.makedirs(path, exist_ok=True)
 
                 # Try to write a test file
-                test_file = os.path.join(path, '.test_write')
-                with open(test_file, 'w') as f:
-                    f.write('test')
+                test_file = os.path.join(path, ".test_write")
+                with open(test_file, "w") as f:
+                    f.write("test")
                 os.remove(test_file)
 
                 results[name] = True
@@ -292,8 +305,10 @@ class ConfigManager:
 
         return results
 
+
 # Global config instance
 _config_manager = None
+
 
 def get_config() -> ConfigManager:
     """Get the global configuration manager instance."""
@@ -301,6 +316,7 @@ def get_config() -> ConfigManager:
     if _config_manager is None:
         _config_manager = ConfigManager()
     return _config_manager
+
 
 def reload_config() -> None:
     """Reload the global configuration."""

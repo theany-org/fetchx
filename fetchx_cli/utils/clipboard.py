@@ -20,6 +20,7 @@ except ImportError:
 @dataclass
 class ClipboardConfig:
     """Configuration for clipboard monitoring."""
+
     enabled: bool = True
     auto_download: bool = False
     check_interval: float = 1.0
@@ -31,46 +32,46 @@ class ClipboardConfig:
     def __post_init__(self):
         if self.url_patterns is None:
             self.url_patterns = [
-                r'https?://.*\.(zip|rar|7z|tar|gz|bz2|exe|msi|dmg|pkg|deb|rpm|apk)(\?.*)?$',
-                r'https?://.*\.(mp4|avi|mkv|mov|wmv|flv|webm|m4v)(\?.*)?$',
-                r'https?://.*\.(mp3|wav|flac|aac|ogg|wma|m4a)(\?.*)?$',
-                r'https?://.*\.(jpg|jpeg|png|gif|bmp|tiff|svg|webp)(\?.*)?$',
-                r'https?://.*\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)(\?.*)?$',
-                r'https?://drive\.google\.com/.*',
-                r'https?://.*\.dropbox\.com/.*',
-                r'https?://.*\.mediafire\.com/.*',
-                r'https?://.*\.mega\.nz/.*',
-                r'https?://.*\.4shared\.com/.*',
-                r'https?://.*\.rapidshare\.com/.*',
-                r'https?://.*\.uploaded\.net/.*',
-                r'https?://.*\.zippyshare\.com/.*',
-                r'https?://.*\.sendspace\.com/.*',
-                r'https?://.*\.fileserve\.com/.*',
-                r'https?://.*\.hotfile\.com/.*',
-                r'https?://.*\.filesonic\.com/.*',
-                r'https?://.*\.wupload\.com/.*',
-                r'https?://.*\.putlocker\.com/.*',
-                r'https?://.*\.sockshare\.com/.*',
-                r'https?://.*github\.com/.*/releases/.*',
-                r'https?://.*\.sourceforge\.net/.*',
+                r"https?://.*\.(zip|rar|7z|tar|gz|bz2|exe|msi|dmg|pkg|deb|rpm|apk)(\?.*)?$",
+                r"https?://.*\.(mp4|avi|mkv|mov|wmv|flv|webm|m4v)(\?.*)?$",
+                r"https?://.*\.(mp3|wav|flac|aac|ogg|wma|m4a)(\?.*)?$",
+                r"https?://.*\.(jpg|jpeg|png|gif|bmp|tiff|svg|webp)(\?.*)?$",
+                r"https?://.*\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)(\?.*)?$",
+                r"https?://drive\.google\.com/.*",
+                r"https?://.*\.dropbox\.com/.*",
+                r"https?://.*\.mediafire\.com/.*",
+                r"https?://.*\.mega\.nz/.*",
+                r"https?://.*\.4shared\.com/.*",
+                r"https?://.*\.rapidshare\.com/.*",
+                r"https?://.*\.uploaded\.net/.*",
+                r"https?://.*\.zippyshare\.com/.*",
+                r"https?://.*\.sendspace\.com/.*",
+                r"https?://.*\.fileserve\.com/.*",
+                r"https?://.*\.hotfile\.com/.*",
+                r"https?://.*\.filesonic\.com/.*",
+                r"https?://.*\.wupload\.com/.*",
+                r"https?://.*\.putlocker\.com/.*",
+                r"https?://.*\.sockshare\.com/.*",
+                r"https?://.*github\.com/.*/releases/.*",
+                r"https?://.*\.sourceforge\.net/.*",
             ]
 
         if self.excluded_domains is None:
             self.excluded_domains = [
-                'google.com',
-                'youtube.com',
-                'facebook.com',
-                'twitter.com',
-                'instagram.com',
-                'reddit.com',
-                'stackoverflow.com',
-                'github.com/explore',
-                'github.com/topics',
-                'linkedin.com',
-                'amazon.com',
-                'ebay.com',
-                'wikipedia.org',
-                'news.ycombinator.com',
+                "google.com",
+                "youtube.com",
+                "facebook.com",
+                "twitter.com",
+                "instagram.com",
+                "reddit.com",
+                "stackoverflow.com",
+                "github.com/explore",
+                "github.com/topics",
+                "linkedin.com",
+                "amazon.com",
+                "ebay.com",
+                "wikipedia.org",
+                "news.ycombinator.com",
             ]
 
 
@@ -79,7 +80,9 @@ class ClipboardMonitor:
 
     def __init__(self, config: ClipboardConfig = None):
         if not CLIPBOARD_AVAILABLE:
-            raise FetchXIdmException("Clipboard monitoring requires pyperclip. Install with: pip install pyperclip")
+            raise FetchXIdmException(
+                "Clipboard monitoring requires pyperclip. Install with: pip install pyperclip"
+            )
 
         self.config = config or ClipboardConfig()
         self.queue = DownloadQueue()
@@ -87,7 +90,9 @@ class ClipboardMonitor:
         self._monitor_task: Optional[asyncio.Task] = None
         self._last_clipboard_content = ""
         self._seen_urls: Set[str] = set()
-        self._url_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in self.config.url_patterns]
+        self._url_patterns = [
+            re.compile(pattern, re.IGNORECASE) for pattern in self.config.url_patterns
+        ]
 
     async def start(self):
         """Start clipboard monitoring."""
@@ -121,7 +126,10 @@ class ClipboardMonitor:
                 # Get clipboard content
                 clipboard_content = await self._get_clipboard_content()
 
-                if clipboard_content and clipboard_content != self._last_clipboard_content:
+                if (
+                    clipboard_content
+                    and clipboard_content != self._last_clipboard_content
+                ):
                     self._last_clipboard_content = clipboard_content
 
                     # Check for URLs
@@ -154,10 +162,7 @@ class ClipboardMonitor:
             return []
 
         # Simple URL extraction
-        url_pattern = re.compile(
-            r'https?://[^\s<>"{}|\\^`\[\]]+',
-            re.IGNORECASE
-        )
+        url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+', re.IGNORECASE)
 
         urls = url_pattern.findall(text)
         return [url.rstrip('.,;:!?") ') for url in urls]
@@ -206,8 +211,16 @@ class ClipboardMonitor:
         try:
             # Check for download-related keywords in URL
             download_keywords = [
-                'download', 'dl', 'get', 'file', 'attachment',
-                'media', 'content', 'resource', 'asset', 'binary'
+                "download",
+                "dl",
+                "get",
+                "file",
+                "attachment",
+                "media",
+                "content",
+                "resource",
+                "asset",
+                "binary",
             ]
 
             url_lower = url.lower()
@@ -217,13 +230,50 @@ class ClipboardMonitor:
 
             # Check for direct file URLs (with extensions)
             common_extensions = [
-                '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',
-                '.exe', '.msi', '.dmg', '.pkg', '.deb', '.rpm', '.apk',
-                '.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm',
-                '.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma',
-                '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.svg',
-                '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-                '.iso', '.img', '.bin', '.torrent'
+                ".zip",
+                ".rar",
+                ".7z",
+                ".tar",
+                ".gz",
+                ".bz2",
+                ".exe",
+                ".msi",
+                ".dmg",
+                ".pkg",
+                ".deb",
+                ".rpm",
+                ".apk",
+                ".mp4",
+                ".avi",
+                ".mkv",
+                ".mov",
+                ".wmv",
+                ".flv",
+                ".webm",
+                ".mp3",
+                ".wav",
+                ".flac",
+                ".aac",
+                ".ogg",
+                ".wma",
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".gif",
+                ".bmp",
+                ".tiff",
+                ".svg",
+                ".pdf",
+                ".doc",
+                ".docx",
+                ".xls",
+                ".xlsx",
+                ".ppt",
+                ".pptx",
+                ".iso",
+                ".img",
+                ".bin",
+                ".torrent",
             ]
 
             for ext in common_extensions:
@@ -260,13 +310,13 @@ class ClipboardMonitor:
     def get_stats(self) -> dict:
         """Get monitoring statistics."""
         return {
-            'is_running': self._is_running,
-            'urls_seen': len(self._seen_urls),
-            'config': {
-                'auto_download': self.config.auto_download,
-                'check_interval': self.config.check_interval,
-                'patterns_count': len(self.config.url_patterns)
-            }
+            "is_running": self._is_running,
+            "urls_seen": len(self._seen_urls),
+            "config": {
+                "auto_download": self.config.auto_download,
+                "check_interval": self.config.check_interval,
+                "patterns_count": len(self.config.url_patterns),
+            },
         }
 
 
@@ -317,13 +367,15 @@ def create_notification_callback(interface):
     return callback
 
 
-def create_clipboard_config(auto_download: bool = False,
-                            check_interval: float = 1.0,
-                            notification_callback: Optional[Callable] = None) -> ClipboardConfig:
+def create_clipboard_config(
+    auto_download: bool = False,
+    check_interval: float = 1.0,
+    notification_callback: Optional[Callable] = None,
+) -> ClipboardConfig:
     """Create clipboard configuration."""
     return ClipboardConfig(
         enabled=True,
         auto_download=auto_download,
         check_interval=check_interval,
-        notification_callback=notification_callback
+        notification_callback=notification_callback,
     )

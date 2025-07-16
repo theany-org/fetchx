@@ -1,22 +1,28 @@
-"""Enhanced download engine with individual segment tracking and pause/resume."""
+"""Enhanced download engine with dedicated merger integration."""
 
-import os
 import asyncio
+import os
 import time
-from typing import List, Optional, Dict, Callable
 from dataclasses import dataclass, field
-from fetchx_cli.core.connection import ConnectionManager, DownloadSegment
-from fetchx_cli.utils.network import HttpClient, NetworkUtils
-from fetchx_cli.utils.file_utils import FileManager
-from fetchx_cli.utils.exceptions import (
-    DownloadException, NetworkException, InsufficientSpaceException
-)
+from typing import List, Optional, Dict, Callable
+
 from fetchx_cli.config.settings import get_config
+from fetchx_cli.core.connection import ConnectionManager, DownloadSegment
+from fetchx_cli.core.merger import FileMerger
+from fetchx_cli.utils.exceptions import (
+    DownloadException,
+    NetworkException,
+    InsufficientSpaceException,
+)
+from fetchx_cli.utils.file_utils import FileManager
 from fetchx_cli.utils.logging import LoggerMixin
+from fetchx_cli.utils.network import HttpClient, NetworkUtils
+
 
 @dataclass
 class DownloadInfo:
     """Download information and metadata."""
+
     url: str
     filename: str
     file_path: str
@@ -27,9 +33,11 @@ class DownloadInfo:
     etag: Optional[str] = None
     headers: Dict[str, str] = field(default_factory=dict)
 
+
 @dataclass
 class SegmentProgress:
     """Detailed progress information for a download segment."""
+
     segment_id: int
     downloaded: int
     total_size: int
@@ -42,9 +50,11 @@ class SegmentProgress:
     elapsed_time: float = 0
     last_update: float = field(default_factory=time.time)
 
+
 @dataclass
 class DownloadStats:
     """Enhanced download statistics with detailed segment tracking."""
+
     start_time: float = field(default_factory=time.time)
     downloaded: int = 0
     total_size: Optional[int] = None
@@ -68,11 +78,17 @@ class DownloadStats:
         """Calculate elapsed time."""
         return time.time() - self.start_time
 
-class EnhancedDownloader(LoggerMixin):
-    """Enhanced download engine with detailed segment tracking and progress reporting."""
 
-    def __init__(self, url: str, output_dir: Optional[str] = None,
-                 filename: Optional[str] = None, headers: Optional[Dict[str, str]] = None):
+class EnhancedDownloader(LoggerMixin):
+    """Enhanced download engine with dedicated merger integration."""
+
+    def __init__(
+        self,
+        url: str,
+        output_dir: Optional[str] = None,
+        filename: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ):
         self.url = url
         self.headers = headers or {}
         self.config = get_config().config
@@ -106,8 +122,10 @@ class EnhancedDownloader(LoggerMixin):
 
     async def get_download_info(self) -> DownloadInfo:
         """Get download information from server."""
-        async with HttpClient(timeout=self.config.download.connect_timeout,
-                            user_agent=self.config.download.user_agent) as client:
+        async with HttpClient(
+            timeout=self.config.download.connect_timeout,
+            user_agent=self.config.download.user_agent,
+        ) as client:
 
             try:
                 info = await client.get_file_info(self.url, self.headers)
@@ -117,7 +135,7 @@ class EnhancedDownloader(LoggerMixin):
             # Determine filename
             filename = self._suggested_filename
             if not filename:
-                filename = info.get('filename')
+                filename = info.get("filename")
             if not filename:
                 filename = FileManager.get_filename_from_url(self.url)
 
@@ -126,20 +144,24 @@ class EnhancedDownloader(LoggerMixin):
             file_path = FileManager.get_unique_filename(file_path)
 
             # Check disk space
-            if info.get('content_length'):
-                if not FileManager.check_disk_space(self.output_dir, info['content_length']):
-                    raise InsufficientSpaceException("Insufficient disk space for download")
+            if info.get("content_length"):
+                if not FileManager.check_disk_space(
+                    self.output_dir, info["content_length"]
+                ):
+                    raise InsufficientSpaceException(
+                        "Insufficient disk space for download"
+                    )
 
             self.download_info = DownloadInfo(
                 url=self.url,
                 filename=os.path.basename(file_path),
                 file_path=file_path,
-                total_size=info.get('content_length'),
-                supports_ranges=info.get('supports_ranges', False),
-                content_type=info.get('content_type'),
-                last_modified=info.get('last_modified'),
-                etag=info.get('etag'),
-                headers=info.get('headers', {})
+                total_size=info.get("content_length"),
+                supports_ranges=info.get("supports_ranges", False),
+                content_type=info.get("content_type"),
+                last_modified=info.get("last_modified"),
+                etag=info.get("etag"),
+                headers=info.get("headers", {}),
             )
 
             return self.download_info
@@ -152,7 +174,7 @@ class EnhancedDownloader(LoggerMixin):
                 id=0,
                 start=0,
                 end=-1,  # Download until end
-                file_path=f"{self.download_info.file_path}.part0"
+                file_path=f"{self.download_info.file_path}.part0",
             )
             return [segment]
 
@@ -162,7 +184,7 @@ class EnhancedDownloader(LoggerMixin):
                 id=0,
                 start=0,
                 end=self.download_info.total_size - 1,
-                file_path=f"{self.download_info.file_path}.part0"
+                file_path=f"{self.download_info.file_path}.part0",
             )
             return [segment]
 
@@ -184,7 +206,7 @@ class EnhancedDownloader(LoggerMixin):
                 id=i,
                 start=start,
                 end=end,
-                file_path=f"{self.download_info.file_path}.part{i}"
+                file_path=f"{self.download_info.file_path}.part{i}",
             )
             segments.append(segment)
 
@@ -208,41 +230,49 @@ class EnhancedDownloader(LoggerMixin):
 
             # Update or create segment progress
             if segment_id not in self.stats.segments:
-                segment_size = segment.end - segment.start + 1 if segment.end != -1 else 0
+                segment_size = (
+                    segment.end - segment.start + 1 if segment.end != -1 else 0
+                )
                 self.stats.segments[segment_id] = SegmentProgress(
                     segment_id=segment_id,
                     downloaded=0,
                     total_size=segment_size,
                     speed=0.0,
                     eta=None,
-                    status='downloading',
+                    status="downloading",
                     start_byte=segment.start,
-                    end_byte=segment.end
+                    end_byte=segment.end,
                 )
 
             segment_progress = self.stats.segments[segment_id]
             segment_progress.downloaded += bytes_downloaded
             segment_progress.last_update = time.time()
-            segment_progress.elapsed_time = segment_progress.last_update - self.stats.start_time
+            segment_progress.elapsed_time = (
+                segment_progress.last_update - self.stats.start_time
+            )
 
             # Calculate segment speed
             if segment_progress.elapsed_time > 0:
-                segment_progress.speed = segment_progress.downloaded / segment_progress.elapsed_time
+                segment_progress.speed = (
+                    segment_progress.downloaded / segment_progress.elapsed_time
+                )
 
                 # Calculate segment ETA
                 if segment_progress.total_size > 0 and segment_progress.speed > 0:
-                    remaining = segment_progress.total_size - segment_progress.downloaded
+                    remaining = (
+                        segment_progress.total_size - segment_progress.downloaded
+                    )
                     segment_progress.eta = remaining / segment_progress.speed
 
             # Update segment status based on actual segment state
             if segment.completed:
-                segment_progress.status = 'completed'
+                segment_progress.status = "completed"
             elif segment.is_paused:
-                segment_progress.status = 'paused'
+                segment_progress.status = "paused"
             elif segment.retry_count > 0:
-                segment_progress.status = 'retrying'
+                segment_progress.status = "retrying"
             else:
-                segment_progress.status = 'downloading'
+                segment_progress.status = "downloading"
 
             segment_progress.retry_count = segment.retry_count
 
@@ -258,22 +288,21 @@ class EnhancedDownloader(LoggerMixin):
     def _update_overall_stats(self):
         """Update overall download statistics based on segment data."""
         # Count connection states
-        self.stats.active_connections = len([
-            s for s in self.stats.segments.values()
-            if s.status == 'downloading'
-        ])
+        self.stats.active_connections = len(
+            [s for s in self.stats.segments.values() if s.status == "downloading"]
+        )
 
-        self.stats.completed_connections = len([
-            s for s in self.stats.segments.values()
-            if s.status == 'completed'
-        ])
+        self.stats.completed_connections = len(
+            [s for s in self.stats.segments.values() if s.status == "completed"]
+        )
 
         self.stats.total_connections = len(self.stats.segments)
 
         # Calculate overall speed (sum of all active segment speeds)
         active_speeds = [
-            s.speed for s in self.stats.segments.values()
-            if s.status == 'downloading' and s.speed > 0
+            s.speed
+            for s in self.stats.segments.values()
+            if s.status == "downloading" and s.speed > 0
         ]
 
         if active_speeds:
@@ -317,18 +346,22 @@ class EnhancedDownloader(LoggerMixin):
         self.stats.total_size = self.download_info.total_size
         self.stats.total_connections = len(self.segments)
 
-        self.log_info(f"Starting download with {len(self.segments)} segments",
-                     segments=len(self.segments), total_size=self.stats.total_size)
+        self.log_info(
+            f"Starting download with {len(self.segments)} segments",
+            segments=len(self.segments),
+            total_size=self.stats.total_size,
+        )
 
         try:
             # Create connection managers for each segment
             tasks = []
             for segment in self.segments:
                 conn_manager = ConnectionManager(
-                    self.url, self.headers,
+                    self.url,
+                    self.headers,
                     self.config.download.timeout,
                     self.config.download.max_retries,
-                    self.config.download.retry_delay
+                    self.config.download.retry_delay,
                 )
                 self._connection_managers.append(conn_manager)
 
@@ -344,20 +377,23 @@ class EnhancedDownloader(LoggerMixin):
 
             # Mark all segments as completed
             for segment_id in self.stats.segments:
-                self.stats.segments[segment_id].status = 'completed'
+                self.stats.segments[segment_id].status = "completed"
 
             # Update final stats
             self.stats.completed_connections = self.stats.total_connections
             self.stats.active_connections = 0
 
-            # Merge segments if multiple parts
+            # Merge segments using dedicated merger
             if len(self.segments) > 1:
-                await self._merge_segments()
+                await self._merge_segments_with_progress()
             else:
                 # Rename single part file
                 os.rename(self.segments[0].file_path, self.download_info.file_path)
 
-            self.log_info("Download completed successfully", file_path=self.download_info.file_path)
+            self.log_info(
+                "Download completed successfully",
+                file_path=self.download_info.file_path,
+            )
             return self.download_info.file_path
 
         except Exception as e:
@@ -366,24 +402,49 @@ class EnhancedDownloader(LoggerMixin):
             self.log_error(f"Download failed: {e}")
             raise DownloadException(f"Download failed: {e}")
 
-    async def _download_segment_with_manager(self, conn_manager: ConnectionManager, segment: DownloadSegment):
+    async def _download_segment_with_manager(
+        self, conn_manager: ConnectionManager, segment: DownloadSegment
+    ):
         """Download a single segment with its own connection manager."""
         async with conn_manager:
             try:
-                await conn_manager.download_segment(segment, self._segment_progress_callback)
+                await conn_manager.download_segment(
+                    segment, self._segment_progress_callback
+                )
                 self.log_debug(f"Segment {segment.id} completed", segment_id=segment.id)
             except Exception as e:
-                self.log_error(f"Segment {segment.id} failed: {e}", segment_id=segment.id)
+                self.log_error(
+                    f"Segment {segment.id} failed: {e}", segment_id=segment.id
+                )
                 # Update segment status
                 if segment.id in self.stats.segments:
-                    self.stats.segments[segment.id].status = 'failed'
+                    self.stats.segments[segment.id].status = "failed"
                 raise DownloadException(f"Segment {segment.id} failed: {e}")
 
-    async def _merge_segments(self):
-        """Merge downloaded segments into final file."""
+    async def _merge_segments_with_progress(self):
+        """Merge downloaded segments using the dedicated merger with progress tracking."""
         part_files = [segment.file_path for segment in self.segments]
-        self.log_info("Merging segments", segments=len(part_files))
-        await FileManager.merge_parts(part_files, self.download_info.file_path)
+
+        self.log_info("Starting file merge", segments=len(part_files))
+
+        # Create progress callback for merge operation
+        def merge_progress_callback(
+            percentage: float, bytes_processed: int, total_size: int
+        ):
+            # You can add merge progress to UI here if needed
+            self.log_debug(
+                f"Merge progress: {percentage:.1f}% ({bytes_processed}/{total_size} bytes)"
+            )
+
+        try:
+            # Use the smart merger that chooses optimal strategy based on file size
+            await FileMerger.merge_parts(
+                part_files, self.download_info.file_path, merge_progress_callback
+            )
+            self.log_info("File merge completed successfully")
+        except Exception as e:
+            self.log_error(f"File merge failed: {e}")
+            raise DownloadException(f"Failed to merge segments: {e}")
 
     async def _cleanup_segments(self):
         """Clean up segment files on failure."""
@@ -405,7 +466,7 @@ class EnhancedDownloader(LoggerMixin):
         for segment in self.segments:
             segment.is_paused = True
             if segment.id in self.stats.segments:
-                self.stats.segments[segment.id].status = 'paused'
+                self.stats.segments[segment.id].status = "paused"
 
         # Update stats
         self.stats.active_connections = 0
@@ -430,7 +491,7 @@ class EnhancedDownloader(LoggerMixin):
             if not segment.completed:
                 segment.is_paused = False
                 if segment.id in self.stats.segments:
-                    self.stats.segments[segment.id].status = 'downloading'
+                    self.stats.segments[segment.id].status = "downloading"
 
         # Update stats
         self._update_overall_stats()
@@ -441,10 +502,11 @@ class EnhancedDownloader(LoggerMixin):
             tasks = []
             for segment in incomplete_segments:
                 conn_manager = ConnectionManager(
-                    self.url, self.headers,
+                    self.url,
+                    self.headers,
                     self.config.download.timeout,
                     self.config.download.max_retries,
-                    self.config.download.retry_delay
+                    self.config.download.retry_delay,
                 )
 
                 task = asyncio.create_task(
@@ -474,23 +536,33 @@ class EnhancedDownloader(LoggerMixin):
             progress_info = self.stats.segments.get(segment.id)
 
             info = {
-                'id': segment.id,
-                'start': segment.start,
-                'end': segment.end,
-                'downloaded': progress_info.downloaded if progress_info else segment.downloaded,
-                'total_size': segment.end - segment.start + 1 if segment.end != -1 else 0,
-                'progress_percentage': 0.0,
-                'speed': progress_info.speed if progress_info else segment.speed,
-                'eta': progress_info.eta if progress_info else segment.eta,
-                'completed': segment.completed,
-                'paused': segment.is_paused,
-                'retry_count': segment.retry_count,
-                'status': progress_info.status if progress_info else ('completed' if segment.completed else 'downloading'),
-                'elapsed_time': progress_info.elapsed_time if progress_info else 0
+                "id": segment.id,
+                "start": segment.start,
+                "end": segment.end,
+                "downloaded": (
+                    progress_info.downloaded if progress_info else segment.downloaded
+                ),
+                "total_size": (
+                    segment.end - segment.start + 1 if segment.end != -1 else 0
+                ),
+                "progress_percentage": 0.0,
+                "speed": progress_info.speed if progress_info else segment.speed,
+                "eta": progress_info.eta if progress_info else segment.eta,
+                "completed": segment.completed,
+                "paused": segment.is_paused,
+                "retry_count": segment.retry_count,
+                "status": (
+                    progress_info.status
+                    if progress_info
+                    else ("completed" if segment.completed else "downloading")
+                ),
+                "elapsed_time": progress_info.elapsed_time if progress_info else 0,
             }
 
-            if info['total_size'] > 0:
-                info['progress_percentage'] = (info['downloaded'] / info['total_size']) * 100
+            if info["total_size"] > 0:
+                info["progress_percentage"] = (
+                    info["downloaded"] / info["total_size"]
+                ) * 100
 
             segment_info.append(info)
 
@@ -501,15 +573,22 @@ class EnhancedDownloader(LoggerMixin):
         segments = self.get_segment_info()
 
         return {
-            'total_connections': len(segments),
-            'active_connections': len([s for s in segments if s['status'] == 'downloading']),
-            'completed_connections': len([s for s in segments if s['completed']]),
-            'paused_connections': len([s for s in segments if s['paused']]),
-            'failed_connections': len([s for s in segments if s['status'] == 'failed']),
-            'total_speed': sum(s['speed'] for s in segments),
-            'total_downloaded': sum(s['downloaded'] for s in segments),
-            'average_progress': sum(s['progress_percentage'] for s in segments) / len(segments) if segments else 0
+            "total_connections": len(segments),
+            "active_connections": len(
+                [s for s in segments if s["status"] == "downloading"]
+            ),
+            "completed_connections": len([s for s in segments if s["completed"]]),
+            "paused_connections": len([s for s in segments if s["paused"]]),
+            "failed_connections": len([s for s in segments if s["status"] == "failed"]),
+            "total_speed": sum(s["speed"] for s in segments),
+            "total_downloaded": sum(s["downloaded"] for s in segments),
+            "average_progress": (
+                sum(s["progress_percentage"] for s in segments) / len(segments)
+                if segments
+                else 0
+            ),
         }
+
 
 # For backwards compatibility
 Downloader = EnhancedDownloader

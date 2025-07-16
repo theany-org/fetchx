@@ -10,7 +10,9 @@ from fetchx_cli.core.connection import ConnectionManager, DownloadSegment
 from fetchx_cli.utils.network import HttpClient, NetworkUtils
 from fetchx_cli.utils.file_utils import FileManager
 from fetchx_cli.utils.exceptions import (
-    DownloadException, NetworkException, InsufficientSpaceException
+    DownloadException,
+    NetworkException,
+    InsufficientSpaceException,
 )
 from fetchx_cli.config.settings import get_config
 
@@ -18,6 +20,7 @@ from fetchx_cli.config.settings import get_config
 @dataclass
 class DownloadInfo:
     """Download information and metadata."""
+
     url: str
     filename: str
     file_path: str
@@ -32,6 +35,7 @@ class DownloadInfo:
 @dataclass
 class DownloadStats:
     """Download statistics."""
+
     start_time: float = field(default_factory=time.time)
     downloaded: int = 0
     total_size: Optional[int] = None
@@ -57,8 +61,13 @@ class DownloadStats:
 class ImprovedDownloader:
     """Improved download engine with better performance."""
 
-    def __init__(self, url: str, output_dir: Optional[str] = None,
-                 filename: Optional[str] = None, headers: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        url: str,
+        output_dir: Optional[str] = None,
+        filename: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ):
         self.url = url
         self.headers = headers or {}
         self.config = get_config().config
@@ -90,8 +99,10 @@ class ImprovedDownloader:
 
     async def get_download_info(self) -> DownloadInfo:
         """Get download information from server."""
-        async with HttpClient(timeout=self.config.download.connect_timeout,
-                              user_agent=self.config.download.user_agent) as client:
+        async with HttpClient(
+            timeout=self.config.download.connect_timeout,
+            user_agent=self.config.download.user_agent,
+        ) as client:
 
             try:
                 info = await client.get_file_info(self.url, self.headers)
@@ -101,7 +112,7 @@ class ImprovedDownloader:
             # Determine filename
             filename = self._suggested_filename
             if not filename:
-                filename = info.get('filename')
+                filename = info.get("filename")
             if not filename:
                 filename = FileManager.get_filename_from_url(self.url)
 
@@ -110,26 +121,31 @@ class ImprovedDownloader:
             file_path = FileManager.get_unique_filename(file_path)
 
             # Check disk space
-            if info.get('content_length'):
-                if not FileManager.check_disk_space(self.output_dir, info['content_length']):
-                    raise InsufficientSpaceException("Insufficient disk space for download")
+            if info.get("content_length"):
+                if not FileManager.check_disk_space(
+                    self.output_dir, info["content_length"]
+                ):
+                    raise InsufficientSpaceException(
+                        "Insufficient disk space for download"
+                    )
 
             self.download_info = DownloadInfo(
                 url=self.url,
                 filename=os.path.basename(file_path),
                 file_path=file_path,
-                total_size=info.get('content_length'),
-                supports_ranges=info.get('supports_ranges', False),
-                content_type=info.get('content_type'),
-                last_modified=info.get('last_modified'),
-                etag=info.get('etag'),
-                headers=info.get('headers', {})
+                total_size=info.get("content_length"),
+                supports_ranges=info.get("supports_ranges", False),
+                content_type=info.get("content_type"),
+                last_modified=info.get("last_modified"),
+                etag=info.get("etag"),
+                headers=info.get("headers", {}),
             )
 
             return self.download_info
 
-    def _calculate_optimal_connections(self, file_size: Optional[int],
-                                       max_connections: int) -> int:
+    def _calculate_optimal_connections(
+        self, file_size: Optional[int], max_connections: int
+    ) -> int:
         """Calculate optimal number of connections based on file size."""
         if not file_size or not self.download_info.supports_ranges:
             return 1
@@ -155,21 +171,25 @@ class ImprovedDownloader:
         """Create optimized download segments."""
         if not self.download_info or not self.download_info.total_size:
             # Single segment for unknown size
-            return [DownloadSegment(
-                id=0,
-                start=0,
-                end=-1,
-                file_path=f"{self.download_info.file_path}.part0"
-            )]
+            return [
+                DownloadSegment(
+                    id=0,
+                    start=0,
+                    end=-1,
+                    file_path=f"{self.download_info.file_path}.part0",
+                )
+            ]
 
         if not self.download_info.supports_ranges or num_connections <= 1:
             # Single segment download
-            return [DownloadSegment(
-                id=0,
-                start=0,
-                end=self.download_info.total_size - 1,
-                file_path=f"{self.download_info.file_path}.part0"
-            )]
+            return [
+                DownloadSegment(
+                    id=0,
+                    start=0,
+                    end=self.download_info.total_size - 1,
+                    file_path=f"{self.download_info.file_path}.part0",
+                )
+            ]
 
         # Multi-segment download with optimized sizing
         total_size = self.download_info.total_size
@@ -184,12 +204,14 @@ class ImprovedDownloader:
             else:
                 end = start + segment_size - 1
 
-            segments.append(DownloadSegment(
-                id=i,
-                start=start,
-                end=end,
-                file_path=f"{self.download_info.file_path}.part{i}"
-            ))
+            segments.append(
+                DownloadSegment(
+                    id=i,
+                    start=start,
+                    end=end,
+                    file_path=f"{self.download_info.file_path}.part{i}",
+                )
+            )
 
         return segments
 
@@ -214,7 +236,9 @@ class ImprovedDownloader:
                         self._speed_samples.pop(0)
 
                     # Calculate average speed
-                    self.stats.speed = sum(self._speed_samples) / len(self._speed_samples)
+                    self.stats.speed = sum(self._speed_samples) / len(
+                        self._speed_samples
+                    )
 
                     # Calculate ETA
                     if self.stats.total_size and self.stats.speed > 0:
@@ -224,7 +248,7 @@ class ImprovedDownloader:
                 self._last_speed_calculation = current_time
 
         # Notify progress callbacks (throttled)
-        if current_time - getattr(self, '_last_callback', 0) >= 0.1:  # 100ms throttle
+        if current_time - getattr(self, "_last_callback", 0) >= 0.1:  # 100ms throttle
             self._last_callback = current_time
             for callback in self._progress_callbacks:
                 try:
@@ -267,10 +291,11 @@ class ImprovedDownloader:
         async def download_segment_with_semaphore(segment):
             async with semaphore:
                 async with ConnectionManager(
-                        self.url, self.headers,
-                        self.config.download.timeout,
-                        self.config.download.max_retries,
-                        self.config.download.retry_delay
+                    self.url,
+                    self.headers,
+                    self.config.download.timeout,
+                    self.config.download.max_retries,
+                    self.config.download.retry_delay,
                 ) as conn_manager:
                     await self._download_segment(conn_manager, segment)
 
@@ -299,28 +324,34 @@ class ImprovedDownloader:
             await self._cleanup_segments()
             raise DownloadException(f"Download failed: {e}")
 
-    async def _download_segment(self, conn_manager: ConnectionManager, segment: DownloadSegment):
+    async def _download_segment(
+        self, conn_manager: ConnectionManager, segment: DownloadSegment
+    ):
         """Download a single segment with improved error handling."""
         try:
-            await conn_manager.download_segment(segment, self._segment_progress_callback)
+            await conn_manager.download_segment(
+                segment, self._segment_progress_callback
+            )
             self.stats.segments_completed += 1
         except Exception as e:
             raise DownloadException(f"Segment {segment.id} failed: {e}")
 
     async def _merge_segments_optimized(self):
         """Merge downloaded segments with optimized I/O."""
-        part_files = [segment.file_path for segment in sorted(self.segments, key=lambda s: s.id)]
+        part_files = [
+            segment.file_path for segment in sorted(self.segments, key=lambda s: s.id)
+        ]
 
         # Use larger buffer for faster merging
         buffer_size = 1024 * 1024  # 1MB buffer
 
         try:
-            with open(self.download_info.file_path, 'wb') as output_file:
+            with open(self.download_info.file_path, "wb") as output_file:
                 for part_file in part_files:
                     if not os.path.exists(part_file):
                         raise DownloadException(f"Part file missing: {part_file}")
 
-                    with open(part_file, 'rb') as part:
+                    with open(part_file, "rb") as part:
                         while True:
                             chunk = part.read(buffer_size)
                             if not chunk:

@@ -24,7 +24,7 @@ class DatabaseManager:
         return cls._instance
 
     def __init__(self):
-        if hasattr(self, '_initialized'):
+        if hasattr(self, "_initialized"):
             return
 
         self._initialized = True
@@ -41,11 +41,9 @@ class DatabaseManager:
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get thread-local database connection."""
-        if not hasattr(self._local, 'connection'):
+        if not hasattr(self._local, "connection"):
             self._local.connection = sqlite3.connect(
-                str(self.db_path),
-                check_same_thread=False,
-                timeout=30.0
+                str(self.db_path), check_same_thread=False, timeout=30.0
             )
             self._local.connection.row_factory = sqlite3.Row
             # Enable WAL mode for better concurrent access
@@ -74,7 +72,8 @@ class DatabaseManager:
         """Initialize database tables."""
         with self.get_cursor() as cursor:
             # Queue items table
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS queue_items (
                     id TEXT PRIMARY KEY,
                     url TEXT NOT NULL,
@@ -92,10 +91,12 @@ class DatabaseManager:
                     eta REAL,
                     file_path TEXT
                 )
-            """)
+            """
+            )
 
             # Sessions table
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY,
                     url TEXT NOT NULL,
@@ -107,10 +108,12 @@ class DatabaseManager:
                     status TEXT NOT NULL DEFAULT 'active',
                     headers TEXT         -- JSON string
                 )
-            """)
+            """
+            )
 
             # Settings table
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS settings (
                     section TEXT NOT NULL,
                     key TEXT NOT NULL,
@@ -119,10 +122,12 @@ class DatabaseManager:
                     updated_at REAL NOT NULL,
                     PRIMARY KEY (section, key)
                 )
-            """)
+            """
+            )
 
             # Logs table
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp REAL NOT NULL,
@@ -131,18 +136,27 @@ class DatabaseManager:
                     message TEXT NOT NULL,
                     extra_data TEXT  -- JSON string for additional data
                 )
-            """)
+            """
+            )
 
             # Create indexes for better performance
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_queue_status ON queue_items(status)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_queue_created ON queue_items(created_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp)")
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_queue_status ON queue_items(status)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_queue_created ON queue_items(created_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp)"
+            )
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level)")
 
     def close_all_connections(self):
         """Close all thread-local connections."""
-        if hasattr(self._local, 'connection'):
+        if hasattr(self._local, "connection"):
             self._local.connection.close()
             del self._local.connection
 
@@ -151,39 +165,41 @@ class DatabaseManager:
         """Add item to download queue."""
         with self.get_cursor() as cursor:
             # Convert dict/list fields to JSON
-            headers_json = json.dumps(item_data.get('headers', {}))
+            headers_json = json.dumps(item_data.get("headers", {}))
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO queue_items (
                     id, url, filename, output_dir, headers, max_connections,
                     status, created_at, started_at, completed_at, error_message,
                     progress_percentage, download_speed, eta, file_path
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                item_data['id'],
-                item_data['url'],
-                item_data.get('filename'),
-                item_data.get('output_dir'),
-                headers_json,
-                item_data.get('max_connections'),
-                item_data.get('status', 'queued'),
-                item_data.get('created_at', time.time()),
-                item_data.get('started_at'),
-                item_data.get('completed_at'),
-                item_data.get('error_message'),
-                item_data.get('progress_percentage', 0.0),
-                item_data.get('download_speed', 0.0),
-                item_data.get('eta'),
-                item_data.get('file_path')
-            ))
-        return item_data['id']
+            """,
+                (
+                    item_data["id"],
+                    item_data["url"],
+                    item_data.get("filename"),
+                    item_data.get("output_dir"),
+                    headers_json,
+                    item_data.get("max_connections"),
+                    item_data.get("status", "queued"),
+                    item_data.get("created_at", time.time()),
+                    item_data.get("started_at"),
+                    item_data.get("completed_at"),
+                    item_data.get("error_message"),
+                    item_data.get("progress_percentage", 0.0),
+                    item_data.get("download_speed", 0.0),
+                    item_data.get("eta"),
+                    item_data.get("file_path"),
+                ),
+            )
+        return item_data["id"]
 
     def get_queue_item(self, item_id: str) -> Optional[Dict[str, Any]]:
         """Get queue item by ID (supports partial ID)."""
         with self.get_cursor(commit=False) as cursor:
             cursor.execute(
-                "SELECT * FROM queue_items WHERE id LIKE ? LIMIT 1",
-                (f"{item_id}%",)
+                "SELECT * FROM queue_items WHERE id LIKE ? LIMIT 1", (f"{item_id}%",)
             )
             row = cursor.fetchone()
             if row:
@@ -197,8 +213,8 @@ class DatabaseManager:
 
         with self.get_cursor() as cursor:
             # Handle special fields that need JSON encoding
-            if 'headers' in updates:
-                updates['headers'] = json.dumps(updates['headers'])
+            if "headers" in updates:
+                updates["headers"] = json.dumps(updates["headers"])
 
             # Build dynamic UPDATE query
             set_clauses = []
@@ -226,7 +242,7 @@ class DatabaseManager:
             if status:
                 cursor.execute(
                     "SELECT * FROM queue_items WHERE status = ? ORDER BY created_at",
-                    (status,)
+                    (status,),
                 )
             else:
                 cursor.execute("SELECT * FROM queue_items ORDER BY created_at")
@@ -236,60 +252,72 @@ class DatabaseManager:
     def get_queue_stats(self) -> Dict[str, Any]:
         """Get queue statistics."""
         with self.get_cursor(commit=False) as cursor:
-            cursor.execute("SELECT status, COUNT(*) as count FROM queue_items GROUP BY status")
-            status_counts = {row['status']: row['count'] for row in cursor.fetchall()}
+            cursor.execute(
+                "SELECT status, COUNT(*) as count FROM queue_items GROUP BY status"
+            )
+            status_counts = {row["status"]: row["count"] for row in cursor.fetchall()}
 
             cursor.execute("SELECT COUNT(*) as total FROM queue_items")
-            total = cursor.fetchone()['total']
+            total = cursor.fetchone()["total"]
 
-            active_count = status_counts.get('downloading', 0)
+            active_count = status_counts.get("downloading", 0)
 
             # Ensure all statuses are represented
-            all_statuses = ['queued', 'downloading', 'paused', 'completed', 'failed', 'cancelled']
+            all_statuses = [
+                "queued",
+                "downloading",
+                "paused",
+                "completed",
+                "failed",
+                "cancelled",
+            ]
             for status in all_statuses:
                 if status not in status_counts:
                     status_counts[status] = 0
 
             return {
-                'total_downloads': total,
-                'active_downloads': active_count,
-                'status_counts': status_counts
+                "total_downloads": total,
+                "active_downloads": active_count,
+                "status_counts": status_counts,
             }
 
     def _queue_row_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
         """Convert queue table row to dictionary."""
         data = dict(row)
         # Parse JSON fields
-        if data['headers']:
+        if data["headers"]:
             try:
-                data['headers'] = json.loads(data['headers'])
+                data["headers"] = json.loads(data["headers"])
             except json.JSONDecodeError:
-                data['headers'] = {}
+                data["headers"] = {}
         else:
-            data['headers'] = {}
+            data["headers"] = {}
         return data
 
     # Session operations
     def add_session(self, session_data: Dict[str, Any]) -> str:
         """Add download session."""
         with self.get_cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO sessions (
                     session_id, url, download_info, segments, stats,
                     created_at, updated_at, status, headers
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                session_data['session_id'],
-                session_data['url'],
-                json.dumps(session_data.get('download_info', {})),
-                json.dumps(session_data.get('segments', [])),
-                json.dumps(session_data.get('stats', {})),
-                session_data.get('created_at', time.time()),
-                session_data.get('updated_at', time.time()),
-                session_data.get('status', 'active'),
-                json.dumps(session_data.get('headers', {}))
-            ))
-        return session_data['session_id']
+            """,
+                (
+                    session_data["session_id"],
+                    session_data["url"],
+                    json.dumps(session_data.get("download_info", {})),
+                    json.dumps(session_data.get("segments", [])),
+                    json.dumps(session_data.get("stats", {})),
+                    session_data.get("created_at", time.time()),
+                    session_data.get("updated_at", time.time()),
+                    session_data.get("status", "active"),
+                    json.dumps(session_data.get("headers", {})),
+                ),
+            )
+        return session_data["session_id"]
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get session by ID."""
@@ -306,11 +334,11 @@ class DatabaseManager:
             return False
 
         # Always update the updated_at timestamp
-        updates['updated_at'] = time.time()
+        updates["updated_at"] = time.time()
 
         with self.get_cursor() as cursor:
             # Handle JSON fields
-            for field in ['download_info', 'segments', 'stats', 'headers']:
+            for field in ["download_info", "segments", "stats", "headers"]:
                 if field in updates and not isinstance(updates[field], str):
                     updates[field] = json.dumps(updates[field])
 
@@ -333,7 +361,7 @@ class DatabaseManager:
             if status:
                 cursor.execute(
                     "SELECT * FROM sessions WHERE status = ? ORDER BY created_at DESC",
-                    (status,)
+                    (status,),
                 )
             else:
                 cursor.execute("SELECT * FROM sessions ORDER BY created_at DESC")
@@ -350,23 +378,26 @@ class DatabaseManager:
         """Clean up old sessions."""
         cutoff_time = time.time() - (max_age_days * 24 * 60 * 60)
         with self.get_cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 DELETE FROM sessions 
                 WHERE status IN ('completed', 'failed') AND updated_at < ?
-            """, (cutoff_time,))
+            """,
+                (cutoff_time,),
+            )
 
     def _session_row_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
         """Convert session table row to dictionary."""
         data = dict(row)
         # Parse JSON fields
-        for field in ['download_info', 'segments', 'stats', 'headers']:
+        for field in ["download_info", "segments", "stats", "headers"]:
             if data[field]:
                 try:
                     data[field] = json.loads(data[field])
                 except json.JSONDecodeError:
-                    data[field] = {} if field != 'segments' else []
+                    data[field] = {} if field != "segments" else []
             else:
-                data[field] = {} if field != 'segments' else []
+                data[field] = {} if field != "segments" else []
         return data
 
     # Settings operations
@@ -375,11 +406,11 @@ class DatabaseManager:
         with self.get_cursor(commit=False) as cursor:
             cursor.execute(
                 "SELECT value, value_type FROM settings WHERE section = ? AND key = ?",
-                (section, key)
+                (section, key),
             )
             row = cursor.fetchone()
             if row:
-                return self._convert_setting_value(row['value'], row['value_type'])
+                return self._convert_setting_value(row["value"], row["value_type"])
             return default
 
     def set_setting(self, section: str, key: str, value: Any) -> None:
@@ -388,10 +419,13 @@ class DatabaseManager:
         value_str = str(value)
 
         with self.get_cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT OR REPLACE INTO settings (section, key, value, value_type, updated_at)
                 VALUES (?, ?, ?, ?, ?)
-            """, (section, key, value_str, value_type, time.time()))
+            """,
+                (section, key, value_str, value_type, time.time()),
+            )
 
     def get_all_settings(self) -> Dict[str, Dict[str, Any]]:
         """Get all settings grouped by section."""
@@ -400,11 +434,11 @@ class DatabaseManager:
 
             result = {}
             for row in cursor.fetchall():
-                section = row['section']
+                section = row["section"]
                 if section not in result:
                     result[section] = {}
-                result[section][row['key']] = self._convert_setting_value(
-                    row['value'], row['value_type']
+                result[section][row["key"]] = self._convert_setting_value(
+                    row["value"], row["value_type"]
                 )
 
             return result
@@ -412,42 +446,52 @@ class DatabaseManager:
     def _get_value_type(self, value: Any) -> str:
         """Get the type string for a value."""
         if isinstance(value, bool):
-            return 'bool'
+            return "bool"
         elif isinstance(value, int):
-            return 'int'
+            return "int"
         elif isinstance(value, float):
-            return 'float'
+            return "float"
         else:
-            return 'str'
+            return "str"
 
     def _convert_setting_value(self, value_str: str, value_type: str) -> Any:
         """Convert string value back to original type."""
-        if value_type == 'bool':
-            return value_str.lower() in ('true', '1', 'yes')
-        elif value_type == 'int':
+        if value_type == "bool":
+            return value_str.lower() in ("true", "1", "yes")
+        elif value_type == "int":
             return int(value_str)
-        elif value_type == 'float':
+        elif value_type == "float":
             return float(value_str)
         else:
             return value_str
 
     # Logging operations
-    def add_log(self, level: str, module: str, message: str, extra_data: Optional[Dict] = None) -> None:
+    def add_log(
+        self, level: str, module: str, message: str, extra_data: Optional[Dict] = None
+    ) -> None:
         """Add log entry."""
         with self.get_cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO logs (timestamp, level, module, message, extra_data)
                 VALUES (?, ?, ?, ?, ?)
-            """, (
-                time.time(),
-                level,
-                module,
-                message,
-                json.dumps(extra_data) if extra_data else None
-            ))
+            """,
+                (
+                    time.time(),
+                    level,
+                    module,
+                    message,
+                    json.dumps(extra_data) if extra_data else None,
+                ),
+            )
 
-    def get_logs(self, level: Optional[str] = None, module: Optional[str] = None,
-                 limit: int = 1000, offset: int = 0) -> List[Dict[str, Any]]:
+    def get_logs(
+        self,
+        level: Optional[str] = None,
+        module: Optional[str] = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
         """Get log entries with optional filtering."""
         with self.get_cursor(commit=False) as cursor:
             query = "SELECT * FROM logs"
@@ -472,11 +516,11 @@ class DatabaseManager:
             logs = []
             for row in cursor.fetchall():
                 log_data = dict(row)
-                if log_data['extra_data']:
+                if log_data["extra_data"]:
                     try:
-                        log_data['extra_data'] = json.loads(log_data['extra_data'])
+                        log_data["extra_data"] = json.loads(log_data["extra_data"])
                     except json.JSONDecodeError:
-                        log_data['extra_data'] = {}
+                        log_data["extra_data"] = {}
                 logs.append(log_data)
 
             return logs

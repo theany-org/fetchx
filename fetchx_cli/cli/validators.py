@@ -3,6 +3,7 @@
 from urllib.parse import urlparse
 from fetchx_cli.utils.exceptions import ValidationException
 
+
 class Validators:
     """Input validation utilities."""
 
@@ -13,15 +14,15 @@ class Validators:
             raise ValidationException("URL cannot be empty")
 
         # Add protocol if missing
-        if not url.startswith(('http://', 'https://', 'ftp://')):
-            url = 'https://' + url
+        if not url.startswith(("http://", "https://", "ftp://")):
+            url = "https://" + url
 
         try:
             parsed = urlparse(url)
             if not all([parsed.scheme, parsed.netloc]):
                 raise ValidationException("Invalid URL format")
 
-            if parsed.scheme not in ('http', 'https', 'ftp'):
+            if parsed.scheme not in ("http", "https", "ftp"):
                 raise ValidationException("URL must use HTTP, HTTPS, or FTP protocol")
         except Exception as e:
             raise ValidationException(f"Invalid URL: {e}")
@@ -37,17 +38,21 @@ class Validators:
         # Check for invalid characters
         invalid_chars = '<>:"/\\|?*'
         if any(char in filename for char in invalid_chars):
-            raise ValidationException(f"Filename contains invalid characters: {invalid_chars}")
+            raise ValidationException(
+                f"Filename contains invalid characters: {invalid_chars}"
+            )
 
         # Check filename length
         if len(filename) > 255:
             raise ValidationException("Filename too long (max 255 characters)")
 
         # Remove leading/trailing whitespace and dots
-        filename = filename.strip(' .')
+        filename = filename.strip(" .")
 
         if not filename:
-            raise ValidationException("Filename cannot be empty after removing invalid characters")
+            raise ValidationException(
+                "Filename cannot be empty after removing invalid characters"
+            )
 
         return filename
 
@@ -86,6 +91,8 @@ class Validators:
         # Check for invalid characters in path
         invalid_chars = '<>"|?*'
         if any(char in path for char in invalid_chars):
-            raise ValidationException(f"Path contains invalid characters: {invalid_chars}")
+            raise ValidationException(
+                f"Path contains invalid characters: {invalid_chars}"
+            )
 
         return path
