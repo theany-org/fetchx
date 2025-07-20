@@ -9,7 +9,7 @@ description = "A powerful command-line Internet Download Manager"
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [
-  {name = "CLI IDM Team"}
+  {name = "FETCHX IDM Team"}
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
