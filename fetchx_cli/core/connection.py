@@ -3,7 +3,7 @@
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Optional, Dict, Callable
+from typing import Callable, Dict, Optional
 
 import aiofiles
 import aiohttp

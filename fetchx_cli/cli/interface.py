@@ -1,23 +1,20 @@
 """Enhanced user interface utilities for CLI with detailed connection progress."""
 
 import asyncio
-from typing import Optional, Dict, Any
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
-from rich.live import Live
-from rich.layout import Layout
-from rich.progress import (
-    Progress,
-    TaskID,
-    BarColumn,
-    TextColumn,
-    DownloadColumn,
-    TransferSpeedColumn,
-    TimeRemainingColumn,
-)
+import os
+from pathlib import Path
+import shutil
+from datetime import datetime
+from typing import Dict, Optional
+
 from humanfriendly import format_size, format_timespan
+from rich.console import Console
+from rich.layout import Layout
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
 from fetchx_cli.core.queue import DownloadQueue, DownloadStatus
 from fetchx_cli.utils.progress import EnhancedProgressTracker
 
@@ -52,8 +49,9 @@ class EnhancedCLIInterface:
         size: Optional[int] = None,
         connections: int = 1,
         output_dir: str = "",
+        temp_dir: str = "",  # NEW: Show temp directory
     ):
-        """Display download information."""
+        """Display download information with temp directory."""
         table = Table(title="📥 Download Information", border_style="blue")
         table.add_column("Property", style="cyan", width=20)
         table.add_column("Value", style="magenta")
@@ -61,6 +59,9 @@ class EnhancedCLIInterface:
         table.add_row("🌐 URL", url[:60] + "..." if len(url) > 60 else url)
         table.add_row("📄 Filename", filename)
         table.add_row("📁 Output Directory", output_dir)
+        table.add_row(
+            "🗂️ Temp Directory", temp_dir if temp_dir else "Auto-generated"
+        )  # NEW
         table.add_row("🔗 Connections", str(connections))
 
         if size:
@@ -68,8 +69,138 @@ class EnhancedCLIInterface:
 
         self.console.print(table)
 
+    def display_temp_directory_status(self):
+        """Display status of temporary directories."""
+        temp_base = os.path.join(Path.home(), ".fetchx_idm", "temp")
+
+        if not os.path.exists(temp_base):
+            self.print_info("🗂️ No temporary directories found")
+            return
+
+        try:
+            temp_dirs = [
+                d
+                for d in os.listdir(temp_base)
+                if os.path.isdir(os.path.join(temp_base, d))
+            ]
+
+            if not temp_dirs:
+                self.print_info("🗂️ No active temporary directories")
+                return
+
+            table = Table(title="🗂️ Temporary Directories", border_style="yellow")
+            table.add_column("Directory", style="cyan", width=40)
+            table.add_column("Size", style="magenta", width=15)
+            table.add_column("Files", style="blue", width=10)
+            table.add_column("Modified", style="green", width=20)
+
+            total_size = 0
+            for temp_dir in temp_dirs:
+                temp_path = os.path.join(temp_base, temp_dir)
+                try:
+                    # Calculate directory size and file count
+                    dir_size = 0
+                    file_count = 0
+
+                    for root, dirs, files in os.walk(temp_path):
+                        file_count += len(files)
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            try:
+                                dir_size += os.path.getsize(file_path)
+                            except OSError:
+                                pass
+
+                    total_size += dir_size
+
+                    # Get modification time
+                    mod_time = os.path.getmtime(temp_path)
+                    mod_time_str = format_timespan(os.path.getctime(temp_path))
+
+                    table.add_row(
+                        temp_dir[:37] + "..." if len(temp_dir) > 37 else temp_dir,
+                        format_size(dir_size),
+                        str(file_count),
+                        mod_time_str + " ago",
+                    )
+
+                except OSError:
+                    table.add_row(temp_dir, "Error", "Error", "Error")
+
+            self.console.print(table)
+            self.print_info(
+                f"📊 Total temporary storage used: {format_size(total_size)}"
+            )
+
+        except OSError as e:
+            self.print_error(f"Error reading temporary directories: {e}")
+
+    def cleanup_temp_directories(
+        self, max_age_hours: int = 24, dry_run: bool = False
+    ) -> Dict[str, int]:
+        """Clean up old temporary directories."""
+        temp_base = os.path.join(Path.home(), ".fetchx_idm", "temp")
+
+        if not os.path.exists(temp_base):
+            return {"cleaned": 0, "size_freed": 0, "errors": 0}
+
+        import time
+
+        cutoff_time = time.time() - (max_age_hours * 3600)
+
+        cleaned_count = 0
+        size_freed = 0
+        error_count = 0
+
+        try:
+            temp_dirs = [
+                d
+                for d in os.listdir(temp_base)
+                if os.path.isdir(os.path.join(temp_base, d))
+            ]
+
+            for temp_dir in temp_dirs:
+                temp_path = os.path.join(temp_base, temp_dir)
+                try:
+                    # Check if directory is old enough
+                    if os.path.getmtime(temp_path) < cutoff_time:
+                        # Calculate size before deletion
+                        dir_size = 0
+                        for root, dirs, files in os.walk(temp_path):
+                            for file in files:
+                                file_path = os.path.join(root, file)
+                                try:
+                                    dir_size += os.path.getsize(file_path)
+                                except OSError:
+                                    pass
+
+                        if not dry_run:
+                            shutil.rmtree(temp_path)
+                            self.print_info(f"🗑️ Cleaned temp directory: {temp_dir}")
+                        else:
+                            self.print_info(
+                                f"🔍 Would clean temp directory: {temp_dir} ({format_size(dir_size)})"
+                            )
+
+                        cleaned_count += 1
+                        size_freed += dir_size
+
+                except OSError as e:
+                    self.print_warning(f"⚠️ Error cleaning {temp_dir}: {e}")
+                    error_count += 1
+
+        except OSError as e:
+            self.print_error(f"Error accessing temporary directories: {e}")
+            error_count += 1
+
+        return {
+            "cleaned": cleaned_count,
+            "size_freed": size_freed,
+            "errors": error_count,
+        }
+
     def display_queue_status(self, queue: DownloadQueue):
-        """Display enhanced queue status with better formatting."""
+        """Display enhanced queue status with temp directory info."""
         try:
             items = queue.list_downloads()
             stats = queue.get_queue_stats()
@@ -94,11 +225,12 @@ class EnhancedCLIInterface:
             table = Table(title="📋 Download Queue", border_style="cyan")
             table.add_column("ID", style="cyan", width=10)
             table.add_column("Filename", style="white", width=25)
-            table.add_column("URL", style="dim", width=35)
+            table.add_column("URL", style="dim", width=30)
             table.add_column("Status", style="bold", width=12)
             table.add_column("Progress", style="green", width=15)
             table.add_column("Speed", style="blue", width=12)
             table.add_column("ETA", style="yellow", width=10)
+            table.add_column("Storage", style="magenta", width=10)  # NEW: Storage type
 
             for item in items[-20:]:  # Show last 20 items
                 # Truncate filename if too long
@@ -108,8 +240,8 @@ class EnhancedCLIInterface:
 
                 # Truncate URL
                 url = item.url
-                if len(url) > 33:
-                    url = url[:30] + "..."
+                if len(url) > 28:
+                    url = url[:25] + "..."
 
                 # Format status with color and icons
                 status_icons = {
@@ -148,6 +280,14 @@ class EnhancedCLIInterface:
                 # Format ETA
                 eta = format_timespan(item.eta) if item.eta else "-"
 
+                # Storage type indicator
+                if item.status == DownloadStatus.DOWNLOADING:
+                    storage = "🗂️ Temp"
+                elif item.status == DownloadStatus.COMPLETED:
+                    storage = "📁 Final"
+                else:
+                    storage = "-"
+
                 table.add_row(
                     item.id[:8] + "...",
                     filename,
@@ -156,9 +296,14 @@ class EnhancedCLIInterface:
                     progress_bar,
                     speed,
                     eta,
+                    storage,
                 )
 
             self.console.print(table)
+
+            # Show temp directory status
+            self.print_info("\n🗂️ Temporary Storage Status:")
+            self.display_temp_directory_status()
 
         except Exception as e:
             self.print_error(f"Error displaying queue status: {e}")
@@ -172,12 +317,13 @@ class EnhancedCLIInterface:
     async def monitor_downloads_enhanced(
         self, queue: DownloadQueue, refresh_interval: float = 0.5
     ):
-        """Enhanced download monitoring with detailed connection progress."""
+        """Enhanced download monitoring with temp directory tracking."""
         layout = Layout()
         layout.split_column(
             Layout(name="header", size=3),
             Layout(name="downloads", size=8),
             Layout(name="connections"),
+            Layout(name="storage", size=4),  # NEW: Storage info
             Layout(name="stats", size=4),
         )
 
@@ -218,6 +364,9 @@ class EnhancedCLIInterface:
                         layout["connections"].update(
                             Panel("🔌 No active connections", border_style="dim")
                         )
+                        layout["storage"].update(
+                            Panel("🗂️ No active temporary storage", border_style="dim")
+                        )
                         layout["stats"].update(
                             Panel("📊 No statistics available", border_style="dim")
                         )
@@ -244,6 +393,16 @@ class EnhancedCLIInterface:
                         )
                     )
 
+                    # NEW: Create storage info table
+                    storage_table = self._create_storage_table()
+                    layout["storage"].update(
+                        Panel(
+                            storage_table,
+                            title="🗂️ Storage Info",
+                            border_style="magenta",
+                        )
+                    )
+
                     # Create stats table
                     stats_table = self._create_stats_table(active_items)
                     layout["stats"].update(
@@ -258,6 +417,191 @@ class EnhancedCLIInterface:
                     )
                     await asyncio.sleep(refresh_interval * 2)
 
+    async def monitor_downloads(
+            self, queue: DownloadQueue, refresh_interval: float = 1.0
+    ):
+        """Basic download monitoring with simple display."""
+        try:
+            self.print_info("🚀 Starting download queue monitoring...")
+            self.print_info("Press Ctrl+C to stop monitoring")
+
+            while queue._is_running:
+                try:
+                    # Clear screen for clean display
+                    import os
+                    os.system('clear' if os.name == 'posix' else 'cls')
+
+                    # Get current downloads
+                    items = queue.list_downloads()
+                    active_items = [
+                        item
+                        for item in items
+                        if item.status == DownloadStatus.DOWNLOADING
+                    ]
+
+                    # Header
+                    self.console.print("\n🚀 [bold blue]FETCHX IDM - Download Monitor[/bold blue]")
+                    self.console.print(f"⏰ Last updated: {datetime.now().strftime('%H:%M:%S')}")
+
+                    if not active_items:
+                        queued_items = [
+                            item
+                            for item in items
+                            if item.status == DownloadStatus.QUEUED
+                        ]
+
+                        if queued_items:
+                            self.console.print(f"\n⏳ Waiting for downloads to start... ({len(queued_items)} queued)")
+                        else:
+                            self.console.print("\n💤 No active downloads")
+
+                        # Show queue summary
+                        stats = queue.get_queue_stats()
+                        summary_text = (
+                            f"📊 Queue Summary: {stats['total_downloads']} total, "
+                            f"{stats['status_counts']['completed']} completed, "
+                            f"{stats['status_counts']['failed']} failed"
+                        )
+                        self.console.print(summary_text)
+
+                        await asyncio.sleep(refresh_interval)
+                        continue
+
+                    # Active downloads table
+                    table = Table(title="📥 Active Downloads", border_style="green")
+                    table.add_column("ID", style="cyan", width=10)
+                    table.add_column("Filename", style="white", width=25)
+                    table.add_column("Progress", style="green", width=20)
+                    table.add_column("Speed", style="blue", width=12)
+                    table.add_column("ETA", style="yellow", width=10)
+                    table.add_column("Connections", style="magenta", width=11)
+
+                    for item in active_items:
+                        # Truncate filename if too long
+                        filename = item.filename or "Unknown"
+                        if len(filename) > 23:
+                            filename = filename[:20] + "..."
+
+                        # Progress bar with percentage
+                        progress_bar = self._create_progress_bar(item.progress_percentage, 15)
+
+                        # Speed
+                        speed = (
+                            format_size(item.download_speed) + "/s"
+                            if item.download_speed > 0
+                            else "-"
+                        )
+
+                        # ETA
+                        eta = format_timespan(item.eta) if item.eta else "-"
+
+                        # Connections
+                        connections = item.max_connections or 1
+                        conn_text = f"🔗 {connections}"
+
+                        table.add_row(
+                            item.id[:8] + "...",
+                            filename,
+                            progress_bar,
+                            speed,
+                            eta,
+                            conn_text,
+                        )
+
+                    self.console.print(table)
+
+                    # Summary statistics
+                    total_speed = sum(
+                        item.download_speed for item in active_items if item.download_speed
+                    )
+
+                    summary_table = Table(border_style="blue")
+                    summary_table.add_column("Metric", style="cyan")
+                    summary_table.add_column("Value", style="magenta")
+
+                    summary_table.add_row("📁 Active Downloads", str(len(active_items)))
+                    summary_table.add_row("🚀 Combined Speed", f"{format_size(total_speed)}/s")
+
+                    # Calculate total connections
+                    total_connections = sum(
+                        getattr(item, "max_connections", None) or 1 for item in active_items
+                    )
+                    summary_table.add_row("🔗 Total Connections", str(total_connections))
+
+                    self.console.print(summary_table)
+
+                    # Instructions
+                    self.console.print("\n💡 Press Ctrl+C to stop monitoring")
+
+                    await asyncio.sleep(refresh_interval)
+
+                except KeyboardInterrupt:
+                    self.print_info("🛑 Monitoring stopped by user")
+                    break
+                except Exception as e:
+                    self.print_error(f"❌ Error during monitoring: {e}")
+                    await asyncio.sleep(refresh_interval * 2)
+
+        except Exception as e:
+            self.print_error(f"❌ Failed to start monitoring: {e}")
+            raise
+
+    def _create_storage_table(self) -> Table:
+        """Create table for storage information."""
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Storage Type", style="cyan", width=15)
+        table.add_column("Location", style="white", width=30)
+        table.add_column("Usage", style="yellow", width=15)
+
+        # Temp directory info
+        temp_base = os.path.join(Path.home(), ".fetchx_idm", "temp")
+        temp_usage = 0
+
+        if os.path.exists(temp_base):
+            try:
+                for root, dirs, files in os.walk(temp_base):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        try:
+                            temp_usage += os.path.getsize(file_path)
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+
+        table.add_row(
+            "🗂️ Temporary",
+            temp_base[:28] + "..." if len(temp_base) > 28 else temp_base,
+            format_size(temp_usage),
+        )
+
+        # Download directory info
+        from fetchx_cli.config.settings import get_config
+
+        config = get_config()
+        download_dir = config.config.paths.download_dir
+
+        try:
+            download_usage = 0
+            if os.path.exists(download_dir):
+                for root, dirs, files in os.walk(download_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        try:
+                            download_usage += os.path.getsize(file_path)
+                        except OSError:
+                            pass
+
+            table.add_row(
+                "📁 Downloads",
+                download_dir[:28] + "..." if len(download_dir) > 28 else download_dir,
+                format_size(download_usage),
+            )
+        except OSError:
+            table.add_row("📁 Downloads", download_dir, "Error")
+
+        return table
+
     def _create_active_downloads_table(self, active_items) -> Table:
         """Create table for active downloads."""
         table = Table(show_header=True, header_style="bold blue")
@@ -266,6 +610,7 @@ class EnhancedCLIInterface:
         table.add_column("Speed", style="blue", width=12)
         table.add_column("Downloaded", style="magenta", width=15)
         table.add_column("ETA", style="yellow", width=10)
+        table.add_column("Storage", style="cyan", width=8)  # NEW
 
         for item in active_items:
             filename = item.filename or "Unknown"
@@ -292,7 +637,10 @@ class EnhancedCLIInterface:
             # ETA
             eta = format_timespan(item.eta) if item.eta else "-"
 
-            table.add_row(filename, progress_bar, speed, downloaded_text, eta)
+            # Storage type
+            storage = "🗂️ Temp"
+
+            table.add_row(filename, progress_bar, speed, downloaded_text, eta, storage)
 
         return table
 
@@ -312,11 +660,10 @@ class EnhancedCLIInterface:
                 filename = filename[:10] + "..."
 
             # Simulate multiple connections for each download
-            # In a real implementation, this would come from the downloader's segment data
             num_connections = getattr(item, "max_connections", None) or 4
 
             for conn_id in range(num_connections):
-                # Simulate connection progress (in real implementation, get from segment data)
+                # Simulate connection progress
                 conn_progress = (item.progress_percentage + (conn_id * 5)) % 100
                 conn_speed = (
                     item.download_speed / num_connections
@@ -344,9 +691,7 @@ class EnhancedCLIInterface:
                     status = "⏳ Wait"
 
                 table.add_row(
-                    (
-                        filename if conn_id == 0 else ""
-                    ),  # Only show filename for first connection
+                    filename if conn_id == 0 else "",
                     f"#{conn_id + 1}",
                     progress_bar,
                     speed_text,
@@ -368,13 +713,13 @@ class EnhancedCLIInterface:
         )
         total_files = len(active_items)
 
-        # Estimate total connections (in real implementation, get from actual segment count)
+        # Estimate total connections
         total_connections = sum(
             getattr(item, "max_connections", None) or 4 for item in active_items
         )
         active_connections = (
             sum(1 for item in active_items if item.download_speed > 0) * 4
-        )  # Simulate
+        )
 
         table.add_row("📁 Active Files", str(total_files))
         table.add_row("🔗 Total Connections", str(total_connections))

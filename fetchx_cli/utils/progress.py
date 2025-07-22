@@ -1,23 +1,18 @@
 """Enhanced progress display utilities with individual segment tracking."""
 
 import time
-from typing import Optional, Dict, Any, List
-from rich.console import Console
-from rich.progress import (
-    Progress,
-    TaskID,
-    BarColumn,
-    TextColumn,
-    DownloadColumn,
-    TransferSpeedColumn,
-    TimeRemainingColumn,
-)
-from rich.table import Table
-from rich.live import Live
-from rich.layout import Layout
-from rich.panel import Panel
-from rich.text import Text
+from typing import Any, Dict, List, Optional
+
 from humanfriendly import format_size, format_timespan
+from rich.console import Console
+from rich.layout import Layout
+from rich.live import Live
+from rich.panel import Panel
+from rich.progress import (BarColumn, DownloadColumn, Progress, TaskID,
+                           TextColumn, TimeRemainingColumn,
+                           TransferSpeedColumn)
+from rich.table import Table
+from rich.text import Text
 
 
 class SegmentProgressTracker:

@@ -1,6 +1,7 @@
 """Input validation for CLI commands."""
 
 from urllib.parse import urlparse
+
 from fetchx_cli.utils.exceptions import ValidationException
 
 

@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -20,8 +20,8 @@ for line in lines:
 
 setup(
     name="fetchx",
-    version="0.1.0",
-    author="CLI IDM Team",
+    version="0.1.1",
+    author="Fetchx IDM Team",
     author_email="",
     description="A powerful command-line Internet Download Manager",
     long_description=long_description,

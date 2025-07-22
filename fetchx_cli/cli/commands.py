@@ -1,27 +1,30 @@
 """Complete CLI command definitions with all enhanced commands."""
 
 import asyncio
-import sys
 import json
 import os
-from typing import Optional
+import sys
+from pathlib import Path
+import time
 from datetime import datetime
+from typing import Optional
+
 import click
+from humanfriendly import format_size, format_timespan
 from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
-from fetchx_cli.core.downloader import EnhancedDownloader
-from fetchx_cli.core.queue import DownloadQueue
-from fetchx_cli.core.session import SessionManager
-from fetchx_cli.core.database import get_database
+
 from fetchx_cli.cli.interface import EnhancedCLIInterface
 from fetchx_cli.cli.validators import Validators
 from fetchx_cli.config.settings import get_config
+from fetchx_cli.core.database import get_database
+from fetchx_cli.core.downloader import EnhancedDownloader
+from fetchx_cli.core.queue import DownloadQueue
+from fetchx_cli.core.session import SessionManager
 from fetchx_cli.utils.exceptions import FetchXIdmException
-from fetchx_cli.utils.logging import get_logger, setup_logging
 from fetchx_cli.utils.file_utils import FileManager
-from humanfriendly import format_size, format_timespan
-import time
+from fetchx_cli.utils.logging import get_logger, setup_logging
 
 console = Console()
 interface = EnhancedCLIInterface()
@@ -43,7 +46,7 @@ def fetchx(ctx, version, log_level):
     logger.info("FETCHX IDM started", "cli")
 
     if version:
-        click.echo("FETCHX IDM v0.1.0")
+        click.echo("FETCHX IDM v0.1.1")
         return
 
     if ctx.invoked_subcommand is None:
@@ -776,18 +779,32 @@ def logs(
         sys.exit(1)
 
 
-@fetchx.command()
+@click.command()
 @click.option("--sessions", is_flag=True, help="Clean up old sessions")
 @click.option("--logs", is_flag=True, help="Clean up old logs")
+@click.option("--temp", is_flag=True, help="Clean up temporary directories")  # NEW
 @click.option("--all", "clean_all", is_flag=True, help="Clean up everything")
 @click.option("--max-age", default=30, type=int, help="Maximum age in days for cleanup")
+@click.option(
+    "--temp-age", default=1, type=int, help="Maximum age in days for temp directories"
+)  # NEW
 @click.option(
     "--dry-run",
     is_flag=True,
     help="Show what would be cleaned without actually doing it",
 )
-def cleanup(sessions: bool, logs: bool, clean_all: bool, max_age: int, dry_run: bool):
-    """Clean up old files and data."""
+@click.option("--force", is_flag=True, help="Force cleanup without confirmation")  # NEW
+def cleanup(
+    sessions: bool,
+    logs: bool,
+    temp: bool,
+    clean_all: bool,
+    max_age: int,
+    temp_age: int,
+    dry_run: bool,
+    force: bool,
+):
+    """Clean up old files, data, and temporary directories."""
     try:
         interface.print_info("🧹 Starting cleanup process...")
 
@@ -796,9 +813,16 @@ def cleanup(sessions: bool, logs: bool, clean_all: bool, max_age: int, dry_run: 
         logger_instance = get_logger()
 
         cleanup_actions = []
+        cleanup_results = {
+            "sessions_cleaned": 0,
+            "logs_cleaned": 0,
+            "temp_cleaned": 0,
+            "temp_size_freed": 0,
+            "errors": 0,
+        }
 
+        # Sessions cleanup
         if clean_all or sessions:
-            # Count old sessions
             cutoff_time = time.time() - (max_age * 24 * 60 * 60)
             old_sessions = [
                 s
@@ -811,8 +835,8 @@ def cleanup(sessions: bool, logs: bool, clean_all: bool, max_age: int, dry_run: 
                     f"🗂️ Remove {len(old_sessions)} old sessions (older than {max_age} days)"
                 )
 
+        # Logs cleanup
         if clean_all or logs:
-            # Count old logs
             cutoff_time = time.time() - (max_age * 24 * 60 * 60)
             all_logs = logger_instance.get_logs(limit=50000)
             old_logs = [log for log in all_logs if log["timestamp"] < cutoff_time]
@@ -820,6 +844,18 @@ def cleanup(sessions: bool, logs: bool, clean_all: bool, max_age: int, dry_run: 
             if old_logs:
                 cleanup_actions.append(
                     f"📄 Remove {len(old_logs)} old log entries (older than {max_age} days)"
+                )
+
+        # NEW: Temporary directories cleanup
+        if clean_all or temp:
+            temp_info = interface.cleanup_temp_directories(
+                max_age_hours=temp_age * 24, dry_run=True  # Always check first
+            )
+
+            if temp_info["cleaned"] > 0:
+                cleanup_actions.append(
+                    f"🗂️ Remove {temp_info['cleaned']} old temporary directories "
+                    f"({format_size(temp_info['size_freed'])}) (older than {temp_age} days)"
                 )
 
         if not cleanup_actions:
@@ -836,47 +872,98 @@ def cleanup(sessions: bool, logs: bool, clean_all: bool, max_age: int, dry_run: 
             return
 
         # Confirm cleanup
-        if not click.confirm("\n🤔 Proceed with cleanup?"):
+        if not force and not click.confirm("\n🤔 Proceed with cleanup?"):
             interface.print_info("❌ Cleanup cancelled")
             return
 
         # Perform cleanup
-        cleaned_sessions = 0
-        cleaned_logs = 0
+        interface.print_info("🚀 Starting cleanup operations...")
 
+        # Clean sessions
         if clean_all or sessions:
             try:
                 session_manager.cleanup_old_sessions(max_age)
-                cleaned_sessions = len(old_sessions)
-                interface.print_success(f"✅ Cleaned {cleaned_sessions} old sessions")
+                cleanup_results["sessions_cleaned"] = len(old_sessions)
+                interface.print_success(
+                    f"✅ Cleaned {cleanup_results['sessions_cleaned']} old sessions"
+                )
             except Exception as e:
                 interface.print_error(f"❌ Error cleaning sessions: {e}")
+                cleanup_results["errors"] += 1
 
+        # Clean logs
         if clean_all or logs:
             try:
-                cleaned_logs = logger_instance.cleanup_old_logs(max_age)
-                interface.print_success(f"✅ Cleaned {cleaned_logs} old log entries")
+                cleanup_results["logs_cleaned"] = logger_instance.cleanup_old_logs(
+                    max_age
+                )
+                interface.print_success(
+                    f"✅ Cleaned {cleanup_results['logs_cleaned']} old log entries"
+                )
             except Exception as e:
                 interface.print_error(f"❌ Error cleaning logs: {e}")
+                cleanup_results["errors"] += 1
+
+        # Clean temporary directories
+        if clean_all or temp:
+            try:
+                temp_results = interface.cleanup_temp_directories(
+                    max_age_hours=temp_age * 24, dry_run=False
+                )
+                cleanup_results["temp_cleaned"] = temp_results["cleaned"]
+                cleanup_results["temp_size_freed"] = temp_results["size_freed"]
+                cleanup_results["errors"] += temp_results["errors"]
+
+                if temp_results["cleaned"] > 0:
+                    interface.print_success(
+                        f"✅ Cleaned {temp_results['cleaned']} temporary directories "
+                        f"({format_size(temp_results['size_freed'])} freed)"
+                    )
+                else:
+                    interface.print_info("ℹ️ No old temporary directories found")
+
+            except Exception as e:
+                interface.print_error(f"❌ Error cleaning temporary directories: {e}")
+                cleanup_results["errors"] += 1
 
         # Show cleanup summary
         interface.print_info("\n📊 Cleanup Summary:")
         summary_table = Table(border_style="green")
         summary_table.add_column("Category", style="cyan")
         summary_table.add_column("Items Cleaned", style="magenta")
+        summary_table.add_column("Space Freed", style="yellow")
 
-        if cleaned_sessions > 0:
-            summary_table.add_row("Sessions", str(cleaned_sessions))
-        if cleaned_logs > 0:
-            summary_table.add_row("Log Entries", str(cleaned_logs))
+        if cleanup_results["sessions_cleaned"] > 0:
+            summary_table.add_row(
+                "Sessions", str(cleanup_results["sessions_cleaned"]), "-"
+            )
+        if cleanup_results["logs_cleaned"] > 0:
+            summary_table.add_row(
+                "Log Entries", str(cleanup_results["logs_cleaned"]), "-"
+            )
+        if cleanup_results["temp_cleaned"] > 0:
+            summary_table.add_row(
+                "Temp Directories",
+                str(cleanup_results["temp_cleaned"]),
+                format_size(cleanup_results["temp_size_freed"]),
+            )
+
+        if cleanup_results["errors"] > 0:
+            summary_table.add_row("Errors", str(cleanup_results["errors"]), "-")
 
         console.print(summary_table)
-        interface.print_success("🎉 Cleanup completed successfully!")
+
+        if cleanup_results["errors"] == 0:
+            interface.print_success("🎉 Cleanup completed successfully!")
+        else:
+            interface.print_warning(
+                f"⚠️ Cleanup completed with {cleanup_results['errors']} errors"
+            )
 
     except Exception as e:
         logger.error(f"Cleanup error: {e}", "cli")
         interface.print_error(f"Cleanup error: {e}")
-        sys.exit(1)
+        return 1
 
 
 @fetchx.command()
@@ -1044,6 +1131,222 @@ def stats(detailed: bool, export: Optional[str]):
         logger.error(f"Error gathering statistics: {e}", "cli")
         interface.print_error(f"Error gathering statistics: {e}")
         sys.exit(1)
+
+
+@click.command()
+@click.option("--detailed", is_flag=True, help="Show detailed information")
+def temp_status(detailed: bool):  # ✅ Now accepts the detailed parameter
+    """Show status of temporary directories."""
+    try:
+        interface.print_info("🗂️ Checking temporary directory status...")
+
+        temp_base = os.path.join(Path.home(), ".fetchx_idm", "temp")
+
+        if not os.path.exists(temp_base):
+            interface.print_info("📁 No FETCHX temporary directory exists")
+            interface.print_info(f"   Expected location: {temp_base}")
+            return
+
+        # Show temp directory status
+        interface.display_temp_directory_status()
+
+        # Calculate total space used
+        total_size = 0
+        total_dirs = 0
+        total_files = 0
+
+        try:
+            temp_dirs = [
+                d
+                for d in os.listdir(temp_base)
+                if os.path.isdir(os.path.join(temp_base, d))
+            ]
+            total_dirs = len(temp_dirs)
+
+            for temp_dir in temp_dirs:
+                temp_path = os.path.join(temp_base, temp_dir)
+                try:
+                    for root, dirs, files in os.walk(temp_path):
+                        total_files += len(files)
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            try:
+                                total_size += os.path.getsize(file_path)
+                            except OSError:
+                                pass
+                except OSError:
+                    pass
+
+        except OSError:
+            interface.print_error("Error calculating temporary directory statistics")
+            return
+
+        # Summary information
+        interface.print_info("\n📊 Summary:")
+        summary_table = Table(border_style="blue")
+        summary_table.add_column("Metric", style="cyan")
+        summary_table.add_column("Value", style="magenta")
+
+        summary_table.add_row("Base Directory", temp_base)
+        summary_table.add_row("Active Temp Directories", str(total_dirs))
+        summary_table.add_row("Total Files", str(total_files))
+        summary_table.add_row("Total Size", format_size(total_size))
+
+        # Available space
+        try:
+            import shutil
+
+            free_space = shutil.disk_usage(temp_base).free
+            summary_table.add_row("Available Space", format_size(free_space))
+        except OSError:
+            summary_table.add_row("Available Space", "Unknown")
+
+        console.print(summary_table)
+
+        # NEW: Detailed information when --detailed flag is used
+        if detailed:
+            interface.print_info("\n🔍 Detailed Directory Information:")
+
+            if total_dirs > 0:
+                detailed_table = Table(
+                    title="📂 Directory Details", border_style="cyan"
+                )
+                detailed_table.add_column("Directory Name", style="white", width=30)
+                detailed_table.add_column("Size", style="magenta", width=12)
+                detailed_table.add_column("Files", style="blue", width=8)
+                detailed_table.add_column("Created", style="green", width=15)
+                detailed_table.add_column("Last Modified", style="yellow", width=15)
+                detailed_table.add_column("Age", style="red", width=10)
+
+                import time
+                from datetime import datetime
+
+                for temp_dir in temp_dirs[:20]:  # Show max 20 directories
+                    temp_path = os.path.join(temp_base, temp_dir)
+                    try:
+                        # Calculate directory stats
+                        dir_size = 0
+                        file_count = 0
+
+                        for root, dirs, files in os.walk(temp_path):
+                            file_count += len(files)
+                            for file in files:
+                                file_path = os.path.join(root, file)
+                                try:
+                                    dir_size += os.path.getsize(file_path)
+                                except OSError:
+                                    pass
+
+                        # Get timestamps
+                        created_time = os.path.getctime(temp_path)
+                        modified_time = os.path.getmtime(temp_path)
+
+                        created_str = datetime.fromtimestamp(created_time).strftime(
+                            "%H:%M:%S"
+                        )
+                        modified_str = datetime.fromtimestamp(modified_time).strftime(
+                            "%H:%M:%S"
+                        )
+
+                        # Calculate age
+                        age_hours = (time.time() - created_time) / 3600
+                        if age_hours < 1:
+                            age_str = f"{int(age_hours * 60)}m"
+                        elif age_hours < 24:
+                            age_str = f"{int(age_hours)}h"
+                        else:
+                            age_str = f"{int(age_hours / 24)}d"
+
+                        # Truncate directory name if too long
+                        display_name = temp_dir
+                        if len(display_name) > 28:
+                            display_name = display_name[:25] + "..."
+
+                        detailed_table.add_row(
+                            display_name,
+                            format_size(dir_size),
+                            str(file_count),
+                            created_str,
+                            modified_str,
+                            age_str,
+                        )
+
+                    except OSError:
+                        detailed_table.add_row(
+                            temp_dir[:28], "Error", "Error", "Error", "Error", "Error"
+                        )
+
+                console.print(detailed_table)
+
+                # Show file breakdown for detailed mode
+                interface.print_info("\n📋 File Type Breakdown:")
+                file_types = {}
+                total_analyzed = 0
+
+                for temp_dir in temp_dirs:
+                    temp_path = os.path.join(temp_base, temp_dir)
+                    try:
+                        for root, dirs, files in os.walk(temp_path):
+                            for file in files:
+                                total_analyzed += 1
+                                ext = os.path.splitext(file)[1].lower()
+                                if not ext:
+                                    ext = "(no extension)"
+                                file_types[ext] = file_types.get(ext, 0) + 1
+                    except OSError:
+                        continue
+
+                if file_types:
+                    types_table = Table(border_style="green")
+                    types_table.add_column("File Type", style="cyan")
+                    types_table.add_column("Count", style="magenta")
+                    types_table.add_column("Percentage", style="yellow")
+
+                    # Sort by count and show top 10
+                    sorted_types = sorted(
+                        file_types.items(), key=lambda x: x[1], reverse=True
+                    )[:10]
+
+                    for ext, count in sorted_types:
+                        percentage = (
+                            (count / total_analyzed) * 100 if total_analyzed > 0 else 0
+                        )
+                        types_table.add_row(ext, str(count), f"{percentage:.1f}%")
+
+                    console.print(types_table)
+
+        # Recommendations
+        if total_size > 1024 * 1024 * 1024:  # > 1GB
+            interface.print_warning(
+                f"⚠️ Temporary directories are using {format_size(total_size)}. "
+                "Consider running 'fetchx cleanup --temp' to free space."
+            )
+        elif total_dirs > 10:
+            interface.print_info(
+                f"ℹ️ Found {total_dirs} temporary directories. "
+                "Old directories can be cleaned with 'fetchx cleanup --temp'."
+            )
+        else:
+            interface.print_success("✅ Temporary directory usage looks healthy")
+
+    except Exception as e:
+        logger.error(f"Error checking temp status: {e}", "cli")
+        interface.print_error(f"Error checking temp status: {e}")
+        return 1
+
+
+# Create temp command group
+@fetchx.group()
+def temp():
+    """Manage temporary directories."""
+    pass
+
+
+# Add temp_status as a subcommand of temp
+temp.add_command(temp_status, name="status")
+
+# Register the cleanup command with main fetchx group
+fetchx.add_command(cleanup)
 
 
 # Entry point for setuptools

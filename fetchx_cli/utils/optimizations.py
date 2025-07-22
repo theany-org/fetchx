@@ -1,20 +1,19 @@
 """Improved download engine with better performance."""
 
-import os
 import asyncio
-import time
 import math
-from typing import List, Optional, Dict, Callable
+import os
+import time
 from dataclasses import dataclass, field
-from fetchx_cli.core.connection import ConnectionManager, DownloadSegment
-from fetchx_cli.utils.network import HttpClient, NetworkUtils
-from fetchx_cli.utils.file_utils import FileManager
-from fetchx_cli.utils.exceptions import (
-    DownloadException,
-    NetworkException,
-    InsufficientSpaceException,
-)
+from typing import Callable, Dict, List, Optional
+
 from fetchx_cli.config.settings import get_config
+from fetchx_cli.core.connection import ConnectionManager, DownloadSegment
+from fetchx_cli.utils.exceptions import (DownloadException,
+                                         InsufficientSpaceException,
+                                         NetworkException)
+from fetchx_cli.utils.file_utils import FileManager
+from fetchx_cli.utils.network import HttpClient, NetworkUtils
 
 
 @dataclass

@@ -1,12 +1,13 @@
 """High-performance file merger for FETCHX IDM downloads."""
 
-import os
 import asyncio
-import aiofiles
-import tempfile
+import os
 import shutil
-from typing import List, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, List, Optional
+
+import aiofiles
+
 from fetchx_cli.utils.exceptions import FileException
 from fetchx_cli.utils.logging import LoggerMixin
 

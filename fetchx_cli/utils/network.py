@@ -1,14 +1,13 @@
 """High-performance, compatible network utilities for FETCHX IDM."""
 
-import aiohttp
 import asyncio
-from typing import Dict, Optional, Tuple, Any
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
-from fetchx_cli.utils.exceptions import (
-    NetworkException,
-    ConnectionException,
-    AuthenticationException,
-)
+
+import aiohttp
+
+from fetchx_cli.utils.exceptions import (AuthenticationException,
+                                         ConnectionException, NetworkException)
 
 
 class NetworkUtils:
@@ -70,7 +69,7 @@ class HttpClient:
             sock_connect=15,  # Connection timeout
             sock_read=timeout,  # Read timeout per chunk
         )
-        self.user_agent = user_agent or "FETCHX-IDM/0.1.0"
+        self.user_agent = user_agent or "FETCHX-IDM/0.1.1"
         self._session = None
 
     async def __aenter__(self):

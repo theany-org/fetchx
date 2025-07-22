@@ -1,13 +1,14 @@
 """Session management for download."""
 
 import time
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass, asdict, field
-from fetchx_cli.core.downloader import DownloadInfo, DownloadStats
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, List, Optional
+
+from fetchx_cli.config.settings import get_config
 from fetchx_cli.core.connection import DownloadSegment
 from fetchx_cli.core.database import get_database
+from fetchx_cli.core.downloader import DownloadInfo, DownloadStats
 from fetchx_cli.utils.exceptions import SessionException
-from fetchx_cli.config.settings import get_config
 
 
 @dataclass

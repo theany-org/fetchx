@@ -1,19 +1,19 @@
-"""Enhanced download engine with dedicated merger integration."""
+"""Enhanced download engine with temporary directory management."""
 
 import asyncio
 import os
+import shutil
+from pathlib import Path
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Callable
+from typing import Callable, Dict, List, Optional
 
 from fetchx_cli.config.settings import get_config
 from fetchx_cli.core.connection import ConnectionManager, DownloadSegment
 from fetchx_cli.core.merger import FileMerger
-from fetchx_cli.utils.exceptions import (
-    DownloadException,
-    NetworkException,
-    InsufficientSpaceException,
-)
+from fetchx_cli.utils.exceptions import (DownloadException,
+                                         InsufficientSpaceException,
+                                         NetworkException)
 from fetchx_cli.utils.file_utils import FileManager
 from fetchx_cli.utils.logging import LoggerMixin
 from fetchx_cli.utils.network import HttpClient, NetworkUtils
@@ -26,6 +26,7 @@ class DownloadInfo:
     url: str
     filename: str
     file_path: str
+    temp_dir: str  # NEW: Temporary directory for this download
     total_size: Optional[int] = None
     supports_ranges: bool = False
     content_type: Optional[str] = None
@@ -65,6 +66,7 @@ class DownloadStats:
     active_connections: int = 0
     completed_connections: int = 0
     total_connections: int = 0
+    temp_dir: Optional[str] = None  # NEW: Track temp directory
 
     @property
     def progress_percentage(self) -> float:
@@ -80,7 +82,7 @@ class DownloadStats:
 
 
 class EnhancedDownloader(LoggerMixin):
-    """Enhanced download engine with dedicated merger integration."""
+    """Enhanced download engine with temporary directory management."""
 
     def __init__(
         self,
@@ -116,6 +118,39 @@ class EnhancedDownloader(LoggerMixin):
         self._segment_progress_lock = asyncio.Lock()
         self._last_progress_update = time.time()
 
+        # NEW: Temporary directory management
+        self._temp_dir: Optional[str] = None
+        self._temp_base_dir = self._get_temp_base_dir()
+
+    def _get_temp_base_dir(self) -> str:
+        """Get the base temporary directory for FETCHX downloads."""
+        # Create a dedicated temp directory for FETCHX
+        temp_base = os.path.join(Path.home(), ".fetchx_idm", "temp")
+        FileManager.ensure_directory(temp_base)
+        return temp_base
+
+    def _create_temp_directory(self, filename: str) -> str:
+        """Create a unique temporary directory for this download."""
+        # Create a unique temp directory based on filename and timestamp
+        safe_filename = FileManager.sanitize_filename(filename)
+        timestamp = int(time.time())
+        temp_dir_name = f"{safe_filename}_{timestamp}_{os.getpid()}"
+
+        temp_dir = os.path.join(self._temp_base_dir, temp_dir_name)
+        FileManager.ensure_directory(temp_dir)
+
+        self.log_info(f"Created temporary directory: {temp_dir}", temp_dir=temp_dir)
+        return temp_dir
+
+    def _cleanup_temp_directory(self):
+        """Clean up the temporary directory."""
+        if self._temp_dir and os.path.exists(self._temp_dir):
+            try:
+                shutil.rmtree(self._temp_dir)
+                self.log_info(f"Cleaned up temporary directory: {self._temp_dir}")
+            except OSError as e:
+                self.log_warning(f"Failed to clean up temp directory: {e}")
+
     def add_progress_callback(self, callback: Callable):
         """Add progress callback."""
         self._progress_callbacks.append(callback)
@@ -140,14 +175,29 @@ class EnhancedDownloader(LoggerMixin):
                 filename = FileManager.get_filename_from_url(self.url)
 
             filename = FileManager.sanitize_filename(filename)
+
+            # Create temporary directory for this download
+            temp_dir = self._create_temp_directory(filename)
+            self._temp_dir = temp_dir
+
+            # Final file path in output directory
             file_path = os.path.join(self.output_dir, filename)
             file_path = FileManager.get_unique_filename(file_path)
 
-            # Check disk space
+            # Check disk space (both temp and final locations)
             if info.get("content_length"):
+                # Check temp directory space
+                if not FileManager.check_disk_space(temp_dir, info["content_length"]):
+                    self._cleanup_temp_directory()
+                    raise InsufficientSpaceException(
+                        "Insufficient disk space in temporary directory"
+                    )
+
+                # Check final directory space
                 if not FileManager.check_disk_space(
                     self.output_dir, info["content_length"]
                 ):
+                    self._cleanup_temp_directory()
                     raise InsufficientSpaceException(
                         "Insufficient disk space for download"
                     )
@@ -156,6 +206,7 @@ class EnhancedDownloader(LoggerMixin):
                 url=self.url,
                 filename=os.path.basename(file_path),
                 file_path=file_path,
+                temp_dir=temp_dir,
                 total_size=info.get("content_length"),
                 supports_ranges=info.get("supports_ranges", False),
                 content_type=info.get("content_type"),
@@ -164,31 +215,38 @@ class EnhancedDownloader(LoggerMixin):
                 headers=info.get("headers", {}),
             )
 
+            # Update stats with temp directory info
+            self.stats.temp_dir = temp_dir
+
             return self.download_info
 
     def _create_segments(self, num_connections: int) -> List[DownloadSegment]:
-        """Create download segments for multi-connection download."""
+        """Create download segments using temporary directory."""
         if not self.download_info or not self.download_info.total_size:
             # Single segment for unknown size or no range support
             segment = DownloadSegment(
                 id=0,
                 start=0,
                 end=-1,  # Download until end
-                file_path=f"{self.download_info.file_path}.part0",
+                file_path=os.path.join(
+                    self.download_info.temp_dir, f"{self.download_info.filename}.part0"
+                ),
             )
             return [segment]
 
         if not self.download_info.supports_ranges or num_connections <= 1:
-            # Single segment download
+            # Single segment download in temp directory
             segment = DownloadSegment(
                 id=0,
                 start=0,
                 end=self.download_info.total_size - 1,
-                file_path=f"{self.download_info.file_path}.part0",
+                file_path=os.path.join(
+                    self.download_info.temp_dir, f"{self.download_info.filename}.part0"
+                ),
             )
             return [segment]
 
-        # Multi-segment download
+        # Multi-segment download in temp directory
         total_size = self.download_info.total_size
         segment_size = total_size // num_connections
         segments = []
@@ -206,7 +264,10 @@ class EnhancedDownloader(LoggerMixin):
                 id=i,
                 start=start,
                 end=end,
-                file_path=f"{self.download_info.file_path}.part{i}",
+                file_path=os.path.join(
+                    self.download_info.temp_dir,
+                    f"{self.download_info.filename}.part{i}",
+                ),
             )
             segments.append(segment)
 
@@ -350,6 +411,7 @@ class EnhancedDownloader(LoggerMixin):
             f"Starting download with {len(self.segments)} segments",
             segments=len(self.segments),
             total_size=self.stats.total_size,
+            temp_dir=self.download_info.temp_dir,
         )
 
         try:
@@ -383,12 +445,8 @@ class EnhancedDownloader(LoggerMixin):
             self.stats.completed_connections = self.stats.total_connections
             self.stats.active_connections = 0
 
-            # Merge segments using dedicated merger
-            if len(self.segments) > 1:
-                await self._merge_segments_with_progress()
-            else:
-                # Rename single part file
-                os.rename(self.segments[0].file_path, self.download_info.file_path)
+            # Merge segments and move to final location
+            await self._finalize_download()
 
             self.log_info(
                 "Download completed successfully",
@@ -399,8 +457,59 @@ class EnhancedDownloader(LoggerMixin):
         except Exception as e:
             # Clean up on failure
             await self._cleanup_segments()
+            self._cleanup_temp_directory()
             self.log_error(f"Download failed: {e}")
             raise DownloadException(f"Download failed: {e}")
+
+    async def _finalize_download(self):
+        """Merge segments and move final file to destination."""
+        temp_final_path = os.path.join(
+            self.download_info.temp_dir, self.download_info.filename
+        )
+
+        if len(self.segments) > 1:
+            # Merge segments in temp directory
+            part_files = [segment.file_path for segment in self.segments]
+
+            self.log_info(
+                "Merging segments in temporary directory", part_count=len(part_files)
+            )
+
+            # Progress callback for merge operation
+            def merge_progress_callback(
+                percentage: float, bytes_processed: int, total_size: int
+            ):
+                self.log_debug(
+                    f"Merge progress: {percentage:.1f}% ({bytes_processed}/{total_size} bytes)"
+                )
+
+            try:
+                await FileMerger.merge_parts(
+                    part_files, temp_final_path, merge_progress_callback
+                )
+                self.log_info("File merge completed in temp directory")
+            except Exception as e:
+                self.log_error(f"File merge failed: {e}")
+                raise DownloadException(f"Failed to merge segments: {e}")
+        else:
+            # Single file - just rename in temp directory
+            os.rename(self.segments[0].file_path, temp_final_path)
+
+        # Move final file from temp to destination
+        self.log_info(
+            f"Moving file from temp to final location: {self.download_info.file_path}"
+        )
+
+        try:
+            # Use atomic move operation
+            await FileManager.atomic_move(temp_final_path, self.download_info.file_path)
+            self.log_info("File successfully moved to final destination")
+        except Exception as e:
+            self.log_error(f"Failed to move file to final destination: {e}")
+            raise DownloadException(f"Failed to move file to destination: {e}")
+        finally:
+            # Clean up temp directory
+            self._cleanup_temp_directory()
 
     async def _download_segment_with_manager(
         self, conn_manager: ConnectionManager, segment: DownloadSegment
@@ -420,31 +529,6 @@ class EnhancedDownloader(LoggerMixin):
                 if segment.id in self.stats.segments:
                     self.stats.segments[segment.id].status = "failed"
                 raise DownloadException(f"Segment {segment.id} failed: {e}")
-
-    async def _merge_segments_with_progress(self):
-        """Merge downloaded segments using the dedicated merger with progress tracking."""
-        part_files = [segment.file_path for segment in self.segments]
-
-        self.log_info("Starting file merge", segments=len(part_files))
-
-        # Create progress callback for merge operation
-        def merge_progress_callback(
-            percentage: float, bytes_processed: int, total_size: int
-        ):
-            # You can add merge progress to UI here if needed
-            self.log_debug(
-                f"Merge progress: {percentage:.1f}% ({bytes_processed}/{total_size} bytes)"
-            )
-
-        try:
-            # Use the smart merger that chooses optimal strategy based on file size
-            await FileMerger.merge_parts(
-                part_files, self.download_info.file_path, merge_progress_callback
-            )
-            self.log_info("File merge completed successfully")
-        except Exception as e:
-            self.log_error(f"File merge failed: {e}")
-            raise DownloadException(f"Failed to merge segments: {e}")
 
     async def _cleanup_segments(self):
         """Clean up segment files on failure."""
@@ -523,6 +607,7 @@ class EnhancedDownloader(LoggerMixin):
         self.log_info("Cancelling download")
         await self.pause()
         await self._cleanup_segments()
+        self._cleanup_temp_directory()
 
     def get_stats(self) -> DownloadStats:
         """Get current download statistics."""
@@ -557,6 +642,7 @@ class EnhancedDownloader(LoggerMixin):
                     else ("completed" if segment.completed else "downloading")
                 ),
                 "elapsed_time": progress_info.elapsed_time if progress_info else 0,
+                "temp_file": segment.file_path,  # NEW: Show temp file location
             }
 
             if info["total_size"] > 0:
@@ -587,6 +673,9 @@ class EnhancedDownloader(LoggerMixin):
                 if segments
                 else 0
             ),
+            "temp_directory": (
+                self.download_info.temp_dir if self.download_info else None
+            ),  # NEW
         }
 
 

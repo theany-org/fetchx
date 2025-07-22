@@ -1,12 +1,13 @@
 """SQLite database manager for FETCHX IDM."""
 
+import json
 import sqlite3
 import threading
 import time
-import json
-from typing import Dict, List, Any, Optional
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+
 from fetchx_cli.utils.exceptions import DatabaseException
 
 

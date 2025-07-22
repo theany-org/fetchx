@@ -2,12 +2,13 @@
 
 import asyncio
 import re
-from typing import Optional, Set, Callable, List
 from dataclasses import dataclass
+from typing import Callable, List, Optional, Set
 from urllib.parse import urlparse
+
 from fetchx_cli.core.queue import DownloadQueue
-from fetchx_cli.utils.network import NetworkUtils
 from fetchx_cli.utils.exceptions import FetchXIdmException
+from fetchx_cli.utils.network import NetworkUtils
 
 try:
     import pyperclip

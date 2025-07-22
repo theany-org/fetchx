@@ -2,10 +2,11 @@
 
 import logging
 import sys
-import time
 import threading
-from typing import Dict, Any, Optional, List
+import time
 from enum import Enum
+from typing import Any, Dict, List, Optional
+
 from fetchx_cli.core.database import get_database
 
 

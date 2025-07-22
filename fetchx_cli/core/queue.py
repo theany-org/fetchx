@@ -3,13 +3,14 @@
 import asyncio
 import time
 import uuid
-from typing import List, Dict, Any, Optional, Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Callable, Dict, List, Optional
+
+from fetchx_cli.config.settings import get_config
+from fetchx_cli.core.database import get_database
 from fetchx_cli.core.downloader import Downloader
 from fetchx_cli.core.session import SessionManager
-from fetchx_cli.core.database import get_database
-from fetchx_cli.config.settings import get_config
 from fetchx_cli.utils.exceptions import QueueException
 
 

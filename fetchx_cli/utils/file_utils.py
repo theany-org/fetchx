@@ -1,19 +1,15 @@
 """File operation utilities for FETCHX IDM - now using dedicated merger module."""
 
+import asyncio
+import hashlib
 import os
 import shutil
-import hashlib
-import asyncio
-from typing import List, Optional, Callable
-from urllib.parse import urlparse, unquote
 from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, List, Optional
+from urllib.parse import unquote, urlparse
 
-from fetchx_cli.core.merger import (
-    merge_parts,
-    merge_parts_streaming,
-    merge_parts_async,
-    FileMerger,
-)
+from fetchx_cli.core.merger import (FileMerger, merge_parts, merge_parts_async,
+                                    merge_parts_streaming)
 from fetchx_cli.utils.exceptions import FileException
 
 
