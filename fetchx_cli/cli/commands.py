@@ -4,8 +4,8 @@ import asyncio
 import json
 import os
 import sys
-from pathlib import Path
 import time
+from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
@@ -25,6 +25,7 @@ from fetchx_cli.core.session import SessionManager
 from fetchx_cli.utils.exceptions import FetchXIdmException
 from fetchx_cli.utils.file_utils import FileManager
 from fetchx_cli.utils.logging import get_logger, setup_logging
+from fetchx_cli.utils.progress import ProgressMonitor
 
 console = Console()
 interface = EnhancedCLIInterface()
@@ -128,6 +129,108 @@ async def _download_file_enhanced(
     detailed: bool,
 ):
     """Enhanced download function with detailed progress tracking."""
+    
+    # Check for existing incomplete downloads before starting new one
+    try:
+        from fetchx_cli.core.session import SessionManager
+        session_manager = SessionManager()
+        
+        # Look for paused or active sessions with the same URL
+        all_sessions = session_manager.list_sessions()
+        incomplete_sessions = [
+            s for s in all_sessions 
+            if s.url == url and s.status in ["paused", "active"]
+        ]
+        
+        if incomplete_sessions:
+            # Validate sessions - check if temp files actually exist
+            valid_sessions = []
+            broken_sessions = []
+            
+            for session in incomplete_sessions:
+                if session.download_info and 'temp_dir' in session.download_info:
+                    temp_dir = session.download_info['temp_dir']
+                    if os.path.exists(temp_dir):
+                        # Check if any segment files exist
+                        part_files = [f for f in os.listdir(temp_dir) if f.endswith('.part0') or f.endswith('.part1') or '.part' in f]
+                        if part_files:
+                            valid_sessions.append(session)
+                        else:
+                            interface.print_warning(f"⚠️ Session {session.session_id} has no segment files - marking for cleanup")
+                            broken_sessions.append(session)
+                    else:
+                        interface.print_warning(f"⚠️ Session {session.session_id} temp directory missing - marking for cleanup")
+                        broken_sessions.append(session)
+                else:
+                    interface.print_warning(f"⚠️ Session {session.session_id} has no temp directory info - marking for cleanup")
+                    broken_sessions.append(session)
+            
+            # Clean up broken sessions automatically
+            if broken_sessions:
+                interface.print_info(f"🧹 Automatically cleaning {len(broken_sessions)} broken session(s)...")
+                for broken_session in broken_sessions:
+                    try:
+                        session_manager.delete_session(broken_session.session_id)
+                        interface.print_success(f"   ✅ Cleaned session: {broken_session.session_id}")
+                    except Exception as e:
+                        interface.print_warning(f"   ⚠️ Could not clean session {broken_session.session_id}: {e}")
+            
+            # Use only valid sessions
+            incomplete_sessions = valid_sessions
+        
+        if incomplete_sessions:
+            # Found existing incomplete download(s) with valid temp files
+            if len(incomplete_sessions) == 1:
+                # Single incomplete download - automatically resume like IDM/aria2
+                session = incomplete_sessions[0]
+                interface.print_info(f"🔄 Found incomplete download - resuming automatically...")
+                interface.print_info(f"📋 Session: {session.session_id} (Status: {session.status})")
+                
+                success = await _resume_from_session(session.session_id)
+                if success:
+                    interface.print_success(f"✅ Successfully resumed and completed download!")
+                    return
+                else:
+                    interface.print_warning(f"⚠️ Resume failed - cleaning session and starting fresh...")
+                    # Clean up the failed session
+                    try:
+                        session_manager.delete_session(session.session_id)
+                        interface.print_info(f"🧹 Cleaned failed session: {session.session_id}")
+                    except Exception as e:
+                        interface.print_warning(f"Could not clean session: {e}")
+                    # Continue to start new download below
+            else:
+                # Multiple incomplete downloads - let user choose
+                interface.print_info(f"🔍 Found {len(incomplete_sessions)} incomplete downloads for this URL:")
+                
+                for i, session in enumerate(incomplete_sessions, 1):
+                    created_time = datetime.fromtimestamp(session.created_at).strftime("%Y-%m-%d %H:%M")
+                    interface.print_info(f"   {i}. 📋 {session.session_id} (Created: {created_time}, Status: {session.status})")
+                
+                interface.print_info("💡 Options:")
+                interface.print_info("   • Resume specific download: fetchx resume-session --session-id <session-id>")
+                interface.print_info("   • Start new download: press Enter")
+                interface.print_info("   • Cancel: Ctrl+C")
+                
+                try:
+                    choice = input("\n❓ Start new download or resume existing? (new/resume/cancel): ").strip().lower()
+                    if choice in ['resume', 'r']:
+                        interface.print_info("📋 Available sessions:")
+                        for i, session in enumerate(incomplete_sessions, 1):
+                            interface.print_info(f"   {i}. fetchx resume-session --session-id {session.session_id}")
+                        return
+                    elif choice in ['cancel', 'c']:
+                        interface.print_info("❌ Cancelled by user")
+                        return
+                    else:
+                        interface.print_info("▶️ Starting new download...")
+                except KeyboardInterrupt:
+                    interface.print_info("\n❌ Cancelled by user")
+                    return
+        
+    except Exception as e:
+        interface.print_warning(f"Could not check for existing downloads: {e}")
+    
     downloader = EnhancedDownloader(url, output_dir, filename, headers)
 
     # Get download info
@@ -146,6 +249,31 @@ async def _download_file_enhanced(
         connections=connections,
         output_dir=download_info.file_path,
     )
+
+    # Create a session for pause/resume functionality
+    session_id = None
+    try:
+        from fetchx_cli.core.session import SessionManager
+        import hashlib
+        
+        session_manager = SessionManager()
+        
+        # Create unique session ID for this download
+        url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+        timestamp = int(time.time())
+        session_id = f"direct_{url_hash}_{timestamp}"
+        
+        # Set the session ID on the downloader BEFORE getting download info
+        downloader.set_session_id(session_id)
+        
+        # Display session ID for pause/resume
+        interface.print_info(f"📋 Session ID: {session_id}")
+        interface.print_info("💡 To pause this download from another terminal:")
+        interface.print_info(f"   fetchx pause {session_id}")
+        interface.print_info("   Or use Ctrl+C to interrupt and resume later")
+        
+    except Exception as e:
+        interface.print_warning(f"Could not create session: {e}")
 
     if show_progress:
         if detailed and download_info.supports_ranges and connections > 1:
@@ -193,6 +321,31 @@ async def _download_file_enhanced(
                     f"   🚀 Average Speed: {format_size(summary['total_speed'])}/s"
                 )
 
+            except KeyboardInterrupt:
+                # Handle Ctrl+C gracefully
+                interface.print_info("\n⏸️ Download interrupted by user")
+                
+                monitor_task.cancel()
+                download_task.cancel()
+                
+                # Pause the download and save session
+                try:
+                    await downloader.pause()
+                    if session_id:
+                        # Verify session was saved
+                        from fetchx_cli.core.session import SessionManager
+                        session_manager = SessionManager()
+                        saved_session = session_manager.get_session(session_id)
+                        if saved_session:
+                            interface.print_success(f"💾 Download paused and saved to session: {session_id}")
+                            interface.print_info("🔄 To resume this download:")
+                            interface.print_info(f"   fetchx resume-session --session-id {session_id}")
+                        else:
+                            interface.print_error("❌ Failed to save session")
+                except Exception as e:
+                    interface.print_error(f"Error pausing download: {e}")
+                
+                raise
             except Exception as e:
                 monitor_task.cancel()
                 raise e
@@ -211,7 +364,7 @@ async def _download_file_enhanced(
 
             progress_tracker.start()
 
-            download_id = "single_download"
+            download_id = session_id or "single_download"
             progress_tracker.add_download(
                 download_id, download_info.filename, download_info.total_size
             )
@@ -232,14 +385,57 @@ async def _download_file_enhanced(
 
                 interface.print_success(f"✅ Download completed: {file_path}")
 
+            except KeyboardInterrupt:
+                # Handle Ctrl+C gracefully for simple progress
+                interface.print_info("\n⏸️ Download interrupted by user")
+                
+                progress_tracker.stop()
+                
+                # Pause the download and save session
+                try:
+                    await downloader.pause()
+                    if session_id:
+                        # Verify session was saved
+                        from fetchx_cli.core.session import SessionManager
+                        session_manager = SessionManager()
+                        saved_session = session_manager.get_session(session_id)
+                        if saved_session:
+                            interface.print_success(f"💾 Download paused and saved to session: {session_id}")
+                            interface.print_info("🔄 To resume this download:")
+                            interface.print_info(f"   fetchx resume-session --session-id {session_id}")
+                        else:
+                            interface.print_error("❌ Failed to save session")
+                except Exception as e:
+                    interface.print_error(f"Error pausing download: {e}")
+                
+                raise
             except Exception as e:
                 progress_tracker.stop()
                 raise
     else:
         # No progress display
         interface.print_info("🚀 Starting download...")
-        file_path = await downloader.download(connections)
-        interface.print_success(f"✅ Download completed: {file_path}")
+        try:
+            file_path = await downloader.download(connections)
+            interface.print_success(f"✅ Download completed: {file_path}")
+        except KeyboardInterrupt:
+            interface.print_info("\n⏸️ Download interrupted by user")
+            try:
+                await downloader.pause()
+                if session_id:
+                    # Verify session was saved
+                    from fetchx_cli.core.session import SessionManager
+                    session_manager = SessionManager()
+                    saved_session = session_manager.get_session(session_id)
+                    if saved_session:
+                        interface.print_success(f"💾 Download paused and saved to session: {session_id}")
+                        interface.print_info("🔄 To resume this download:")
+                        interface.print_info(f"   fetchx resume-session --session-id {session_id}")
+                    else:
+                        interface.print_error("❌ Failed to save session")
+            except Exception as e:
+                interface.print_error(f"Error pausing download: {e}")
+            raise
 
 
 @fetchx.command()
@@ -334,9 +530,7 @@ def queue(detailed: bool):
             stats_table.add_row("📊 Total Downloads", str(stats["total_downloads"]))
             stats_table.add_row("🔄 Active Downloads", str(stats["active_downloads"]))
             stats_table.add_row("⏳ Queued", str(stats["status_counts"]["queued"]))
-            stats_table.add_row(
-                "✅ Completed", str(stats["status_counts"]["completed"])
-            )
+            stats_table.add_row("✅ Completed", str(stats["status_counts"]["completed"]))
             stats_table.add_row("❌ Failed", str(stats["status_counts"]["failed"]))
             stats_table.add_row(
                 "🚫 Cancelled", str(stats["status_counts"]["cancelled"])
@@ -515,6 +709,292 @@ def remove(item_id: str):
         logger.error(f"Error removing download: {e}", "cli", item_id=item_id)
         interface.print_error(f"Error removing download: {e}")
         sys.exit(1)
+
+
+@fetchx.command()
+@click.argument("item_id")
+def pause(item_id: str):
+    """Pause a download."""
+    try:
+        logger.info(f"Pausing download: {item_id}", "cli", item_id=item_id)
+        
+        # First try to pause as a queue item
+        queue = DownloadQueue()
+        queue_success = queue.pause_download(item_id)
+        
+        if queue_success:
+            interface.print_success(f"⏸️ Paused queue download: {item_id}")
+            logger.info(f"Queue download paused successfully", "cli", item_id=item_id)
+            return
+        
+        # If not found in queue, try to pause as a session (direct download)
+        from fetchx_cli.core.session import SessionManager
+        session_manager = SessionManager()
+        
+        # Check if it's a session ID (direct download)
+        session = session_manager.get_session(item_id)
+        if session and session.status == "active":
+            # Mark session as paused
+            session_manager.pause_session(item_id)
+            interface.print_success(f"⏸️ Paused direct download session: {item_id}")
+            interface.print_info("💡 This download can be resumed with:")
+            interface.print_info(f"   fetchx resume-session --session-id {item_id}")
+            logger.info(f"Direct download session paused successfully", "cli", item_id=item_id)
+            return
+        
+        # Try partial session ID match
+        all_sessions = session_manager.list_sessions("active")
+        matching_sessions = [s for s in all_sessions if s.session_id.startswith(item_id)]
+        
+        if len(matching_sessions) == 1:
+            session = matching_sessions[0]
+            session_manager.pause_session(session.session_id)
+            interface.print_success(f"⏸️ Paused direct download session: {session.session_id}")
+            interface.print_info("💡 This download can be resumed with:")
+            interface.print_info(f"   fetchx resume-session --session-id {session.session_id}")
+            logger.info(f"Direct download session paused successfully", "cli", item_id=session.session_id)
+            return
+        elif len(matching_sessions) > 1:
+            interface.print_error(f"❌ Multiple sessions match '{item_id}'. Please use the full session ID:")
+            for session in matching_sessions:
+                interface.print_info(f"   {session.session_id}")
+            return
+        
+        # Not found anywhere
+        interface.print_error(f"❌ Download not found or cannot be paused: {item_id}")
+        interface.print_info("💡 Use 'fetchx queue' to see queue downloads")
+        interface.print_info("💡 Use 'fetchx resume-session --list' to see direct download sessions")
+        logger.warning(f"Download not found for pausing", "cli", item_id=item_id)
+        
+    except Exception as e:
+        logger.error(f"Error pausing download: {e}", "cli", item_id=item_id)
+        interface.print_error(f"Error pausing download: {e}")
+        sys.exit(1)
+
+
+@fetchx.command()
+@click.argument("item_id")
+def resume(item_id: str):
+    """Resume a paused download."""
+    try:
+        logger.info(f"Resuming download: {item_id}", "cli", item_id=item_id)
+        
+        # First try to resume as a queue item
+        queue = DownloadQueue()
+        queue_success = queue.resume_download(item_id)
+        
+        if queue_success:
+            interface.print_success(f"▶️ Resumed queue download: {item_id}")
+            logger.info(f"Queue download resumed successfully", "cli", item_id=item_id)
+            return
+        
+        # If not found in queue, try to resume as a session (direct download)
+        from fetchx_cli.core.session import SessionManager
+        session_manager = SessionManager()
+        
+        # Check if it's a full session ID
+        session = session_manager.get_session(item_id)
+        if session and session.status == "paused":
+            session_manager.resume_session(item_id)
+            interface.print_success(f"▶️ Resumed direct download session: {item_id}")
+            interface.print_info("💡 You can also use:")
+            interface.print_info(f"   fetchx resume-session --session-id {item_id}")
+            logger.info(f"Direct download session resumed successfully", "cli", item_id=item_id)
+            return
+        
+        # Try partial session ID match for paused sessions
+        paused_sessions = session_manager.list_sessions("paused")
+        matching_sessions = [s for s in paused_sessions if s.session_id.startswith(item_id)]
+        
+        if len(matching_sessions) == 1:
+            session = matching_sessions[0]
+            session_manager.resume_session(session.session_id)
+            interface.print_success(f"▶️ Resumed direct download session: {session.session_id}")
+            interface.print_info("💡 You can also use:")
+            interface.print_info(f"   fetchx resume-session --session-id {session.session_id}")
+            logger.info(f"Direct download session resumed successfully", "cli", item_id=session.session_id)
+            return
+        elif len(matching_sessions) > 1:
+            interface.print_error(f"❌ Multiple paused sessions match '{item_id}'. Please use the full session ID:")
+            for session in matching_sessions:
+                created_time = datetime.fromtimestamp(session.created_at).strftime("%Y-%m-%d %H:%M")
+                interface.print_info(f"   {session.session_id} - {session.url[:50]}... (Created: {created_time})")
+            return
+        
+        # Not found anywhere
+        interface.print_error(f"❌ Download not found or cannot be resumed: {item_id}")
+        interface.print_info("💡 Use 'fetchx queue' to see queue downloads")
+        interface.print_info("💡 Use 'fetchx resume-session --list' to see paused sessions")
+        logger.warning(f"Download not found for resuming", "cli", item_id=item_id)
+        
+    except Exception as e:
+        logger.error(f"Error resuming download: {e}", "cli", item_id=item_id)
+        interface.print_error(f"Error resuming download: {e}")
+        sys.exit(1)
+
+
+@fetchx.command()
+@click.option("--session-id", help="Resume from specific session ID")
+@click.option("--url", help="Resume downloads for specific URL")
+@click.option("--list", "list_resumable", is_flag=True, help="List resumable downloads")
+def resume_session(session_id: Optional[str], url: Optional[str], list_resumable: bool):
+    """Resume downloads from saved sessions."""
+    
+    async def _resume_session_async():
+        try:
+            session_manager = SessionManager()
+            
+            if list_resumable:
+                # List all resumable sessions
+                interface.print_info("📋 Finding resumable downloads...")
+                resumable_sessions = session_manager.get_resumable_sessions()
+                
+                if not resumable_sessions:
+                    interface.print_info("📭 No resumable downloads found")
+                    return
+                    
+                # Display resumable sessions
+                table = Table(title="📋 Resumable Downloads", border_style="blue")
+                table.add_column("Session ID", style="cyan", width=12)
+                table.add_column("URL", style="white", width=40)
+                table.add_column("Status", style="yellow", width=10)
+                table.add_column("Created", style="green", width=15)
+                
+                for session in resumable_sessions:
+                    url_display = session.url[:37] + "..." if len(session.url) > 40 else session.url
+                    created_time = datetime.fromtimestamp(session.created_at).strftime("%Y-%m-%d %H:%M")
+                    
+                    table.add_row(
+                        session.session_id[:10] + "...",
+                        url_display,
+                        session.status,
+                        created_time
+                    )
+                
+                console.print(table)
+                interface.print_info("\n💡 Use 'fetchx resume-session --session-id <id>' to resume a specific download")
+                return
+            
+            if session_id:
+                # Resume specific session
+                interface.print_info(f"🔄 Resuming session: {session_id}")
+                success = await _resume_from_session(session_id)
+                
+                if success:
+                    interface.print_success(f"✅ Successfully resumed session: {session_id}")
+                else:
+                    interface.print_error(f"❌ Failed to resume session: {session_id}")
+                    sys.exit(1)
+            
+            elif url:
+                # Resume all sessions for URL
+                interface.print_info(f"🔄 Resuming downloads for URL: {url}")
+                sessions = session_manager.get_sessions_by_url(url)
+                resumable = [s for s in sessions if s.status == "paused"]
+                
+                if not resumable:
+                    interface.print_info(f"📭 No resumable downloads found for URL: {url}")
+                    return
+                
+                successful = 0
+                for session in resumable:
+                    try:
+                        if await _resume_from_session(session.session_id):
+                            successful += 1
+                    except Exception as e:
+                        logger.error(f"Failed to resume session {session.session_id}: {e}")
+                
+                interface.print_success(f"✅ Resumed {successful}/{len(resumable)} downloads")
+            
+            else:
+                interface.print_info("❓ Use --list to see resumable downloads, --session-id to resume specific session, or --url to resume by URL")
+
+        except Exception as e:
+            logger.error(f"Error resuming session: {e}", "cli")
+            interface.print_error(f"Error resuming session: {e}")
+            sys.exit(1)
+    
+    try:
+        asyncio.run(_resume_session_async())
+    except Exception as e:
+        logger.error(f"Resume session error: {e}", "cli")
+        interface.print_error(f"Resume session error: {e}")
+        sys.exit(1)
+
+
+async def _resume_from_session(session_id: str) -> bool:
+    """Resume download from saved session."""
+    try:
+        from fetchx_cli.core.session import SessionManager
+        
+        session_manager = SessionManager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            interface.print_error(f"❌ Session not found: {session_id}")
+            return False
+        
+        # Additional validation - check if temp directory and files exist
+        if session.download_info and 'temp_dir' in session.download_info:
+            temp_dir = session.download_info['temp_dir']
+            if not os.path.exists(temp_dir):
+                interface.print_error(f"❌ Temp directory missing: {temp_dir}")
+                interface.print_info(f"🧹 Session will be cleaned up automatically")
+                return False
+            
+            # Check for segment files
+            try:
+                part_files = [f for f in os.listdir(temp_dir) if '.part' in f]
+                if not part_files:
+                    interface.print_error(f"❌ No segment files found in: {temp_dir}")
+                    interface.print_info(f"🧹 Session will be cleaned up automatically")
+                    return False
+            except Exception as e:
+                interface.print_error(f"❌ Cannot access temp directory: {e}")
+                return False
+        
+        interface.print_info(f"📋 Restoring {len(session.segments)} segments from session")
+        
+        # Create enhanced downloader from session
+        downloader = await EnhancedDownloader.create_from_session(session_id)
+        
+        if not downloader:
+            interface.print_error(f"❌ Failed to create downloader from session")
+            return False
+        
+        # Start progress monitoring
+        progress_monitor = ProgressMonitor(
+            show_segments=False,  # Simplified for resume
+            show_speed=True,
+            update_interval=0.5   # Less frequent updates for resume
+        )
+        downloader.add_progress_callback(progress_monitor.update_progress)
+        
+        # Resume download
+        interface.print_info(f"🚀 Resuming download: {session.download_info['filename']}")
+        
+        try:
+            final_path = await downloader.resume()
+            
+            # Stop progress monitoring
+            progress_monitor.stop()
+            
+            if final_path:
+                interface.print_success(f"✅ Download completed: {final_path}")
+                return True
+            else:
+                interface.print_error(f"❌ Resume failed")
+                return False
+                
+        except Exception as e:
+            # Stop progress monitoring on error
+            progress_monitor.stop()
+            interface.print_error(f"❌ Resume failed: {e}")
+            return False
+            
+    except Exception as e:
+        interface.print_error(f"❌ Resume failed: {e}")
+        return False
 
 
 @fetchx.command()
@@ -1350,6 +1830,126 @@ fetchx.add_command(cleanup)
 
 
 @fetchx.command()
+@click.option("--active", is_flag=True, help="Show only active/pausable downloads")
+@click.option("--paused", is_flag=True, help="Show only paused downloads")
+def downloads(active: bool, paused: bool):
+    """List all downloads (queue + direct downloads)."""
+    try:
+        interface.print_info("📋 Loading all downloads...")
+        
+        # Get queue downloads
+        queue = DownloadQueue()
+        queue_items = queue.list_downloads()
+        
+        # Get session downloads  
+        from fetchx_cli.core.session import SessionManager
+        session_manager = SessionManager()
+        all_sessions = session_manager.list_sessions()
+        
+        # Filter sessions based on options
+        if active:
+            sessions = [s for s in all_sessions if s.status == "active"]
+        elif paused:
+            sessions = [s for s in all_sessions if s.status == "paused"]
+        else:
+            sessions = [s for s in all_sessions if s.status in ["active", "paused"]]
+        
+        # Filter queue items based on options
+        if active:
+            queue_items = [q for q in queue_items if q.status.value == "downloading"]
+        elif paused:
+            queue_items = [q for q in queue_items if q.status.value == "paused"]
+        
+        # Display results
+        if not queue_items and not sessions:
+            if active:
+                interface.print_info("📭 No active downloads found")
+            elif paused:
+                interface.print_info("📭 No paused downloads found")
+            else:
+                interface.print_info("📭 No downloads found")
+            return
+        
+        interface.console.print(f"\n🚀 [bold blue]FETCHX IDM - All Downloads[/bold blue]")
+        
+        # Show queue downloads
+        if queue_items:
+            interface.print_info(f"\n📥 Queue Downloads ({len(queue_items)}):")
+            queue_table = Table(border_style="cyan")
+            queue_table.add_column("ID", style="cyan", width=10)
+            queue_table.add_column("File", style="white", width=30)
+            queue_table.add_column("Status", style="bold", width=12)
+            queue_table.add_column("Progress", style="green", width=15)
+            
+            status_icons = {
+                "queued": "⏳",
+                "downloading": "🔄",
+                "paused": "⏸️",
+                "completed": "✅",
+                "failed": "❌",
+                "cancelled": "🚫",
+            }
+            
+            for item in queue_items:
+                filename = (
+                    (item.filename or "Unknown")[:27] + "..."
+                    if len(item.filename or "Unknown") > 27
+                    else (item.filename or "Unknown")
+                )
+                
+                icon = status_icons.get(item.status.value, "❓")
+                status_text = f"{icon} {item.status.value.upper()}"
+                progress_bar = interface._create_progress_bar(item.progress_percentage, 12)
+                
+                queue_table.add_row(
+                    item.id[:8],
+                    filename,
+                    status_text,
+                    progress_bar,
+                )
+            
+            interface.console.print(queue_table)
+        
+        # Show direct download sessions
+        if sessions:
+            interface.print_info(f"\n🔗 Direct Download Sessions ({len(sessions)}):")
+            session_table = Table(border_style="blue")
+            session_table.add_column("Session ID", style="cyan", width=20)
+            session_table.add_column("URL", style="white", width=40)
+            session_table.add_column("Status", style="bold", width=10)
+            session_table.add_column("Created", style="green", width=15)
+            
+            for session in sessions:
+                url_display = session.url[:37] + "..." if len(session.url) > 40 else session.url
+                created_time = datetime.fromtimestamp(session.created_at).strftime("%Y-%m-%d %H:%M")
+                
+                status_icon = "🔄" if session.status == "active" else "⏸️"
+                status_text = f"{status_icon} {session.status.upper()}"
+                
+                session_table.add_row(
+                    session.session_id,
+                    url_display,
+                    status_text,
+                    created_time
+                )
+            
+            interface.console.print(session_table)
+        
+        # Show helpful commands
+        interface.print_info("\n💡 Available commands:")
+        interface.print_info("   fetchx pause <id>     - Pause download (works with queue ID or session ID)")
+        interface.print_info("   fetchx resume <id>    - Resume download (works with queue ID or session ID)")
+        interface.print_info("   fetchx cancel <id>    - Cancel download")
+        interface.print_info("   fetchx downloads --active  - Show only active downloads")
+        interface.print_info("   fetchx downloads --paused  - Show only paused downloads")
+        
+    except Exception as e:
+        logger.error(f"Error listing downloads: {e}", "cli")
+        interface.print_error(f"Error listing downloads: {e}")
+        sys.exit(1)
+
+
+@fetchx.command()
 @click.argument('level', required=False, type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], case_sensitive=False))
 def log_level(level):
     """View or set the persistent log level configuration."""
@@ -1388,6 +1988,257 @@ def log_level(level):
             console.print(f"[red]Error saving log level:[/red] {e}")
             return
         
+
+@fetchx.command()
+@click.option("--session-id", help="Finalize specific session")
+@click.option("--all", "finalize_all", is_flag=True, help="Finalize all incomplete downloads")
+@click.option("--dry-run", is_flag=True, help="Show what would be finalized without doing it")
+def finalize(session_id: Optional[str], finalize_all: bool, dry_run: bool):
+    """Manually finalize downloads that are stuck in temp directories."""
+    
+    async def _finalize_async():
+        try:
+            from fetchx_cli.core.session import SessionManager
+            
+            session_manager = SessionManager()
+            
+            if session_id:
+                # Finalize specific session
+                interface.print_info(f"🔧 Finalizing session: {session_id}")
+                
+                session = session_manager.get_session(session_id)
+                if not session:
+                    interface.print_error(f"❌ Session not found: {session_id}")
+                    return
+                
+                success = await _finalize_single_session(session, dry_run)
+                if success:
+                    interface.print_success("✅ Finalization completed!")
+                else:
+                    interface.print_error("❌ Finalization failed!")
+                    
+            elif finalize_all:
+                # Find all sessions that might need finalization
+                interface.print_info("🔍 Finding downloads that need finalization...")
+                
+                all_sessions = session_manager.list_sessions()
+                sessions_to_finalize = []
+                
+                for session in all_sessions:
+                    if session.status in ["active", "paused"]:
+                        # Check if temp directory exists with part files
+                        if session.download_info and 'temp_dir' in session.download_info:
+                            temp_dir = session.download_info['temp_dir']
+                            if os.path.exists(temp_dir):
+                                files = os.listdir(temp_dir)
+                                part_files = [f for f in files if '.part' in f]
+                                if part_files:
+                                    sessions_to_finalize.append(session)
+                
+                if not sessions_to_finalize:
+                    interface.print_info("📭 No downloads found that need finalization")
+                    return
+                
+                interface.print_info(f"🔧 Found {len(sessions_to_finalize)} downloads to finalize:")
+                for session in sessions_to_finalize:
+                    created_time = datetime.fromtimestamp(session.created_at).strftime("%Y-%m-%d %H:%M")
+                    interface.print_info(f"   📋 {session.session_id} - {session.url[:50]}... (Created: {created_time})")
+                
+                if dry_run:
+                    interface.print_info("🔬 Dry run completed - no changes made")
+                    return
+                
+                # Confirm finalization
+                if not click.confirm(f"\n❓ Finalize {len(sessions_to_finalize)} downloads?"):
+                    interface.print_info("❌ Finalization cancelled")
+                    return
+                
+                # Finalize all found sessions
+                successful = 0
+                for session in sessions_to_finalize:
+                    interface.print_info(f"🔧 Finalizing: {session.session_id}")
+                    success = await _finalize_single_session(session, False)
+                    if success:
+                        successful += 1
+                    else:
+                        interface.print_error(f"❌ Failed to finalize: {session.session_id}")
+                
+                interface.print_success(f"✅ Finalized {successful}/{len(sessions_to_finalize)} downloads")
+                
+            else:
+                interface.print_error("❌ Please specify --session-id or --all")
+                interface.print_info("💡 Use 'fetchx finalize --all --dry-run' to see what would be finalized")
+                
+        except Exception as e:
+            interface.print_error(f"❌ Finalization error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    try:
+        asyncio.run(_finalize_async())
+    except Exception as e:
+        interface.print_error(f"❌ Command error: {e}")
+        sys.exit(1)
+
+
+async def _finalize_single_session(session, dry_run: bool = False) -> bool:
+    """Finalize a single session."""
+    try:
+        from fetchx_cli.core.downloader import DownloadInfo, DownloadSegment
+        
+        # Restore download info
+        download_info = DownloadInfo(**session.download_info)
+        
+        # Check temp directory
+        temp_dir = download_info.temp_dir
+        if not os.path.exists(temp_dir):
+            interface.print_error(f"❌ Temp directory not found: {temp_dir}")
+            return False
+        
+        # Find part files
+        files = os.listdir(temp_dir)
+        part_files = sorted([f for f in files if '.part' in f])
+        
+        if not part_files:
+            interface.print_error(f"❌ No part files found in: {temp_dir}")
+            return False
+        
+        interface.print_info(f"📄 Found {len(part_files)} part files")
+        
+        # Determine base filename
+        base_name = download_info.filename
+        temp_final_path = os.path.join(temp_dir, base_name)
+        
+        if dry_run:
+            interface.print_info(f"🔬 Would merge {len(part_files)} files to: {temp_final_path}")
+            interface.print_info(f"🔬 Would move to: {download_info.file_path}")
+            return True
+        
+        # Check if already merged in temp
+        if os.path.exists(temp_final_path):
+            interface.print_info("📄 File already merged in temp directory")
+        else:
+            # Merge part files
+            interface.print_info(f"🔀 Merging {len(part_files)} files...")
+            
+            from fetchx_cli.core.merger import FileMerger
+            part_paths = [os.path.join(temp_dir, f) for f in part_files]
+            
+            def progress_callback(percentage, bytes_processed, total_size):
+                if percentage % 10 == 0:  # Only show every 10%
+                    interface.print_info(f"📊 Merge progress: {percentage:.0f}%")
+            
+            await FileMerger.merge_parts(part_paths, temp_final_path, progress_callback)
+            
+            if not os.path.exists(temp_final_path):
+                interface.print_error("❌ Merge failed - output file not created")
+                return False
+            
+            interface.print_success("✅ Files merged successfully")
+        
+        # Move to final location
+        interface.print_info(f"📦 Moving to final location: {download_info.file_path}")
+        
+        from fetchx_cli.utils.file_utils import FileManager
+        await FileManager.atomic_move(temp_final_path, download_info.file_path)
+        
+        # Verify final file
+        if os.path.exists(download_info.file_path):
+            final_size = os.path.getsize(download_info.file_path)
+            interface.print_success(f"✅ File moved successfully: {format_size(final_size)}")
+            
+            # Clean up temp directory
+            try:
+                import shutil
+                shutil.rmtree(temp_dir)
+                interface.print_info("🧹 Cleaned up temp directory")
+            except Exception as e:
+                interface.print_warning(f"Could not clean up temp directory: {e}")
+            
+            # Mark session as completed
+            from fetchx_cli.core.session import SessionManager
+            session_manager = SessionManager()
+            session_manager.complete_session(session.session_id)
+            
+            return True
+        else:
+            interface.print_error("❌ Failed to move file to final location")
+            return False
+            
+    except Exception as e:
+        interface.print_error(f"❌ Finalization failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+@fetchx.command()
+@click.option("--completed", is_flag=True, help="Clean completed sessions")
+@click.option("--failed", is_flag=True, help="Clean failed sessions")
+@click.option("--stuck", is_flag=True, help="Clean stuck active sessions with no temp files")
+@click.option("--all", "clean_all", is_flag=True, help="Clean all non-active sessions")
+@click.option("--dry-run", is_flag=True, help="Show what would be cleaned")
+@click.option("--force", is_flag=True, help="Skip confirmation")
+def clean_sessions(completed: bool, failed: bool, stuck: bool, clean_all: bool, dry_run: bool, force: bool):
+    """Clean up old/stuck download sessions."""
+    try:
+        from fetchx_cli.core.session import SessionManager
+        
+        session_manager = SessionManager()
+        all_sessions = session_manager.list_sessions()
+        
+        sessions_to_clean = []
+        
+        if clean_all:
+            sessions_to_clean = [s for s in all_sessions if s.status in ["completed", "failed"]]
+        else:
+            if completed:
+                sessions_to_clean.extend([s for s in all_sessions if s.status == "completed"])
+            if failed:
+                sessions_to_clean.extend([s for s in all_sessions if s.status == "failed"])
+            if stuck:
+                # Find active sessions with no temp files
+                for session in all_sessions:
+                    if session.status == "active" and session.download_info:
+                        temp_dir = session.download_info.get('temp_dir')
+                        if temp_dir and not os.path.exists(temp_dir):
+                            sessions_to_clean.append(session)
+        
+        if not sessions_to_clean:
+            interface.print_info("📭 No sessions found to clean")
+            return
+        
+        interface.print_info(f"🧹 Found {len(sessions_to_clean)} sessions to clean:")
+        for session in sessions_to_clean:
+            created_time = datetime.fromtimestamp(session.created_at).strftime("%Y-%m-%d %H:%M")
+            interface.print_info(f"   📋 {session.session_id} - {session.status} (Created: {created_time})")
+            if session.download_info:
+                url = session.url[:50] + "..." if len(session.url) > 50 else session.url
+                interface.print_info(f"       🌐 {url}")
+        
+        if dry_run:
+            interface.print_info("🔬 Dry run completed - no changes made")
+            return
+        
+        if not force and not click.confirm(f"\n❓ Clean {len(sessions_to_clean)} sessions?"):
+            interface.print_info("❌ Cleaning cancelled")
+            return
+        
+        # Clean sessions
+        cleaned = 0
+        for session in sessions_to_clean:
+            try:
+                session_manager.delete_session(session.session_id)
+                cleaned += 1
+            except Exception as e:
+                interface.print_error(f"❌ Failed to clean session {session.session_id}: {e}")
+        
+        interface.print_success(f"✅ Cleaned {cleaned}/{len(sessions_to_clean)} sessions")
+        
+    except Exception as e:
+        interface.print_error(f"❌ Error cleaning sessions: {e}")
+        sys.exit(1)
+
 
 # Entry point for setuptools
 def main():

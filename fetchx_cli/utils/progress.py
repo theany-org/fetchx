@@ -204,37 +204,40 @@ class EnhancedProgressTracker:
         eta: Optional[float] = None,
         status: str = "downloading",
     ):
-        """Update individual segment progress."""
+        """Update individual segment progress with pause support."""
         if (
             download_id not in self.segment_trackers
             or segment_id not in self.segment_trackers[download_id]
         ):
             return
 
-        segment_tracker = self.segment_trackers[download_id][segment_id]
-        segment_tracker.update(downloaded, speed, eta)
-        segment_tracker.status = status
+        tracker = self.segment_trackers[download_id][segment_id]
+        tracker.update(downloaded, speed, eta)
+        tracker.status = status  # Support for paused, downloading, completed, failed
 
-        if self.segment_progress:
-            # Format speed
+        # Update segment progress display
+        if self.segment_progress and hasattr(tracker, 'task_id'):
+            task_id = tracker.task_id
+
+            # Format speed display
             speed_text = f"{format_size(speed)}/s" if speed > 0 else "-"
 
-            # Format status with color
-            status_text = status
-            if status == "completed":
-                status_text = "[green]done[/green]"
-            elif status == "failed":
-                status_text = "[red]error[/red]"
-            elif status == "paused":
-                status_text = "[yellow]paused[/yellow]"
-            elif status == "downloading":
-                status_text = "[blue]active[/blue]"
+            # Enhanced status display with pause support
+            status_icons = {
+                "downloading": "🔄",
+                "paused": "⏸️", 
+                "completed": "✅",
+                "failed": "❌",
+                "retrying": "🔄"
+            }
+            
+            status_display = f"{status_icons.get(status, '❓')} {status[:8]}"
 
             self.segment_progress.update(
-                segment_tracker.task_id,
+                task_id,
                 completed=downloaded,
                 speed=speed_text,
-                status=status_text,
+                status=status_display,
             )
 
     def update_with_stats(self, download_id: str, stats):
@@ -399,3 +402,66 @@ class EnhancedProgressTracker:
 
 # Legacy compatibility
 ProgressTracker = EnhancedProgressTracker
+
+
+class ProgressMonitor:
+    """Simple progress monitor for download callbacks."""
+    
+    def __init__(self, show_segments: bool = True, show_speed: bool = True, update_interval: float = 0.1):
+        self.console = Console()
+        self.show_segments = show_segments
+        self.show_speed = show_speed
+        self.update_interval = update_interval
+        self.last_update = 0
+        self.tracker = None
+        
+    def update_progress(self, stats):
+        """Update progress from download stats."""
+        current_time = time.time()
+        
+        # Throttle updates based on update_interval
+        if current_time - self.last_update < self.update_interval:
+            return
+            
+        self.last_update = current_time
+        
+        try:
+            # Create tracker if not exists
+            if not self.tracker:
+                self.tracker = EnhancedProgressTracker(
+                    show_segments=self.show_segments,
+                    show_speed=self.show_speed
+                )
+                self.tracker.start()
+                
+                # Add initial download task
+                if hasattr(stats, 'total_size') and stats.total_size:
+                    self.tracker.add_download(
+                        download_id="current",
+                        filename="Download",
+                        total_size=stats.total_size
+                    )
+            
+            # Update with current stats
+            if hasattr(stats, 'downloaded') and hasattr(stats, 'total_size'):
+                self.tracker.update_download(
+                    download_id="current",
+                    downloaded=stats.downloaded,
+                    total=stats.total_size
+                )
+                
+        except Exception as e:
+            # Fallback to simple console output
+            if hasattr(stats, 'downloaded') and hasattr(stats, 'total_size') and stats.total_size:
+                percentage = (stats.downloaded / stats.total_size) * 100
+                downloaded_str = format_size(stats.downloaded)
+                total_str = format_size(stats.total_size)
+                speed_str = f" • {format_size(stats.speed)}/s" if hasattr(stats, 'speed') and self.show_speed else ""
+                
+                print(f"\r📥 {percentage:5.1f}% • {downloaded_str}/{total_str}{speed_str}", end="", flush=True)
+    
+    def stop(self):
+        """Stop the progress monitor."""
+        if self.tracker:
+            self.tracker.stop()
+            self.tracker = None

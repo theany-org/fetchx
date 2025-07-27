@@ -200,113 +200,88 @@ class EnhancedCLIInterface:
         }
 
     def display_queue_status(self, queue: DownloadQueue):
-        """Display enhanced queue status with temp directory info."""
-        try:
-            items = queue.list_downloads()
-            stats = queue.get_queue_stats()
+        """Display queue status with enhanced pause/resume support."""
+        items = queue.list_downloads()
+        stats = queue.get_queue_stats()
 
-            # Display queue statistics with icons
-            stats_panel = Panel(
-                f"📊 Total: {stats['total_downloads']} | "
-                f"🔄 Active: {stats['active_downloads']} | "
-                f"⏳ Queued: {stats['status_counts']['queued']} | "
-                f"✅ Completed: {stats['status_counts']['completed']} | "
-                f"❌ Failed: {stats['status_counts']['failed']}",
-                title="📈 Queue Statistics",
-                border_style="blue",
+        if not items:
+            self.print_info("📭 Download queue is empty")
+            return
+
+        # Enhanced status with pause support
+        self.console.print("\n🚀 [bold blue]FETCHX IDM - Download Queue[/bold blue]")
+
+        # Summary table
+        summary_table = Table(title="📊 Queue Summary", border_style="blue")
+        summary_table.add_column("Status", style="cyan")
+        summary_table.add_column("Count", style="magenta")
+
+        summary_table.add_row("📊 Total Downloads", str(stats["total_downloads"]))
+        summary_table.add_row("🔄 Active Downloads", str(stats["active_downloads"]))
+        summary_table.add_row("⏳ Queued", str(stats["status_counts"]["queued"]))
+        summary_table.add_row("⏸️ Paused", str(stats["status_counts"]["paused"]))
+        summary_table.add_row("✅ Completed", str(stats["status_counts"]["completed"]))
+        summary_table.add_row("❌ Failed", str(stats["status_counts"]["failed"]))
+        summary_table.add_row("🚫 Cancelled", str(stats["status_counts"]["cancelled"]))
+
+        self.console.print(summary_table)
+
+        # Downloads table with pause/resume status
+        downloads_table = Table(title="📋 Downloads", border_style="cyan")
+        downloads_table.add_column("ID", style="cyan", width=10)
+        downloads_table.add_column("File", style="white", width=25)
+        downloads_table.add_column("Status", style="bold", width=12)
+        downloads_table.add_column("Progress", style="green", width=15)
+        downloads_table.add_column("Speed", style="blue", width=10)
+        downloads_table.add_column("ETA", style="magenta", width=8)
+
+        # Status icons with pause support
+        status_icons = {
+            "queued": "⏳",
+            "downloading": "🔄",
+            "paused": "⏸️",
+            "completed": "✅",
+            "failed": "❌",
+            "cancelled": "🚫",
+        }
+
+        for item in items:
+            filename = (
+                (item.filename or "Unknown")[:22] + "..."
+                if len(item.filename or "Unknown") > 22
+                else (item.filename or "Unknown")
             )
-            self.console.print(stats_panel)
 
-            if not items:
-                self.console.print("📭 No downloads in queue.", style="yellow")
-                return
+            icon = status_icons.get(item.status.value, "❓")
+            status_text = f"{icon} {item.status.value.upper()}"
 
-            # Display downloads table with enhanced formatting
-            table = Table(title="📋 Download Queue", border_style="cyan")
-            table.add_column("ID", style="cyan", width=10)
-            table.add_column("Filename", style="white", width=25)
-            table.add_column("URL", style="dim", width=30)
-            table.add_column("Status", style="bold", width=12)
-            table.add_column("Progress", style="green", width=15)
-            table.add_column("Speed", style="blue", width=12)
-            table.add_column("ETA", style="yellow", width=10)
-            table.add_column("Storage", style="magenta", width=10)  # NEW: Storage type
+            # Enhanced progress bar
+            progress_bar = self._create_progress_bar(item.progress_percentage, 12)
 
-            for item in items[-20:]:  # Show last 20 items
-                # Truncate filename if too long
-                filename = item.filename or "Unknown"
-                if len(filename) > 23:
-                    filename = filename[:20] + "..."
+            speed = (
+                format_size(item.download_speed) + "/s"
+                if item.download_speed > 0
+                else "-"
+            )
+            eta = format_timespan(item.eta) if item.eta else "-"
 
-                # Truncate URL
-                url = item.url
-                if len(url) > 28:
-                    url = url[:25] + "..."
+            downloads_table.add_row(
+                item.id[:8],
+                filename,
+                status_text,
+                progress_bar,
+                speed,
+                eta,
+            )
 
-                # Format status with color and icons
-                status_icons = {
-                    DownloadStatus.QUEUED: "⏳",
-                    DownloadStatus.DOWNLOADING: "🔄",
-                    DownloadStatus.PAUSED: "⏸️",
-                    DownloadStatus.COMPLETED: "✅",
-                    DownloadStatus.FAILED: "❌",
-                    DownloadStatus.CANCELLED: "🚫",
-                }
+        self.console.print(downloads_table)
 
-                status_colors = {
-                    DownloadStatus.QUEUED: "yellow",
-                    DownloadStatus.DOWNLOADING: "green",
-                    DownloadStatus.PAUSED: "orange1",
-                    DownloadStatus.COMPLETED: "bright_green",
-                    DownloadStatus.FAILED: "red",
-                    DownloadStatus.CANCELLED: "orange1",
-                }
-
-                icon = status_icons.get(item.status, "❓")
-                color = status_colors.get(item.status, "white")
-                status_text = Text(f"{icon} {item.status.value.upper()}")
-                status_text.style = color
-
-                # Format progress bar
-                progress_bar = self._create_progress_bar(item.progress_percentage)
-
-                # Format speed
-                speed = (
-                    format_size(item.download_speed) + "/s"
-                    if item.download_speed > 0
-                    else "-"
-                )
-
-                # Format ETA
-                eta = format_timespan(item.eta) if item.eta else "-"
-
-                # Storage type indicator
-                if item.status == DownloadStatus.DOWNLOADING:
-                    storage = "🗂️ Temp"
-                elif item.status == DownloadStatus.COMPLETED:
-                    storage = "📁 Final"
-                else:
-                    storage = "-"
-
-                table.add_row(
-                    item.id[:8] + "...",
-                    filename,
-                    url,
-                    status_text,
-                    progress_bar,
-                    speed,
-                    eta,
-                    storage,
-                )
-
-            self.console.print(table)
-
-            # Show temp directory status
-            self.print_info("\n🗂️ Temporary Storage Status:")
-            self.display_temp_directory_status()
-
-        except Exception as e:
-            self.print_error(f"Error displaying queue status: {e}")
+        # Show helpful commands for pause/resume
+        self.console.print("\n💡 [dim]Available commands:[/dim]")
+        self.console.print("   [yellow]fetchx pause <id>[/yellow]   - Pause a download")
+        self.console.print("   [yellow]fetchx resume <id>[/yellow]  - Resume a paused download")
+        self.console.print("   [yellow]fetchx cancel <id>[/yellow]  - Cancel a download")
+        self.console.print("   [yellow]fetchx resume-session --list[/yellow] - List resumable sessions")
 
     def _create_progress_bar(self, percentage: float, width: int = 10) -> str:
         """Create a text-based progress bar."""

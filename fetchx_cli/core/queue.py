@@ -205,6 +205,83 @@ class DownloadQueue:
             self._notify_progress()
         return success
 
+    def pause_download(self, item_id: str) -> bool:
+        """Pause an active download."""
+        # Find the full item ID if partial ID was provided
+        item = self.queue_manager.get_item(item_id)
+        if not item:
+            return False
+
+        full_item_id = item.id
+
+        # Only allow pausing downloads that are currently downloading
+        if item.status != DownloadStatus.DOWNLOADING:
+            return False
+
+        # Pause the downloader if it's active
+        if full_item_id in self._active_downloads:
+            downloader = self._active_downloads[full_item_id]
+            asyncio.create_task(self._pause_downloader(downloader, full_item_id))
+
+        # Update item status
+        success = self.queue_manager.update_item(
+            item_id, status=DownloadStatus.PAUSED
+        )
+
+        if success:
+            self._notify_progress()
+        return success
+
+    def resume_download(self, item_id: str) -> bool:
+        """Resume a paused download."""
+        # Find the full item ID if partial ID was provided
+        item = self.queue_manager.get_item(item_id)
+        if not item:
+            return False
+
+        full_item_id = item.id
+
+        # Only allow resuming paused downloads
+        if item.status != DownloadStatus.PAUSED:
+            return False
+
+        # Update item status to queued so it will be picked up by the queue processor
+        success = self.queue_manager.update_item(
+            item_id, status=DownloadStatus.QUEUED
+        )
+
+        if success:
+            self._notify_progress()
+        return success
+
+    async def _pause_downloader(self, downloader, item_id: str):
+        """Pause a downloader and save session state."""
+        try:
+            # Create session to save download state
+            session_id = f"session_{item_id}_{int(time.time())}"
+            
+            # Save session state
+            if hasattr(downloader, 'download_info') and downloader.download_info:
+                await self.session_manager.create_session(
+                    session_id=session_id,
+                    url=downloader.url,
+                    download_info=downloader.download_info,
+                    segments=downloader.segments,
+                    headers=downloader.headers
+                )
+                
+                # Update session with current stats
+                await self.session_manager.update_session_progress(session_id, downloader.stats)
+                
+                # Mark session as paused
+                await self.session_manager.pause_session(session_id)
+
+            # Pause the actual downloader
+            await downloader.pause()
+            
+        except Exception as e:
+            print(f"Error pausing downloader: {e}")
+
     def get_download(self, item_id: str) -> Optional[QueueItem]:
         """Get download item by ID."""
         return self.queue_manager.get_item(item_id)

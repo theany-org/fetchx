@@ -274,7 +274,7 @@ class EnhancedDownloader(LoggerMixin):
         return segments
 
     async def _segment_progress_callback(self, segment_id: int, bytes_downloaded: int):
-        """Enhanced progress callback with detailed segment tracking."""
+        """Enhanced progress callback with detailed segment tracking and session updates."""
         async with self._segment_progress_lock:
             # Update overall downloaded
             self.stats.downloaded += bytes_downloaded
@@ -345,26 +345,57 @@ class EnhancedDownloader(LoggerMixin):
             if current_time - self._last_progress_update >= 0.1:
                 self._last_progress_update = current_time
                 await self._notify_progress_callbacks()
+                
+                # Periodic session updates (every 5 seconds)
+                last_session_update = getattr(self, '_last_session_update', 0)
+                if current_time - last_session_update >= 5.0:
+                    await self._update_session_progress()
+                    self._last_session_update = current_time
 
     def _update_overall_stats(self):
         """Update overall download statistics based on segment data."""
-        # Count connection states
-        self.stats.active_connections = len(
-            [s for s in self.stats.segments.values() if s.status == "downloading"]
-        )
-
-        self.stats.completed_connections = len(
-            [s for s in self.stats.segments.values() if s.status == "completed"]
-        )
-
+        # Count connection states - handle both SegmentProgress objects and dicts
+        active_count = 0
+        completed_count = 0
+        
+        for segment_data in self.stats.segments.values():
+            # Handle both SegmentProgress objects and dictionaries
+            if hasattr(segment_data, 'status'):
+                # It's a SegmentProgress object
+                status = segment_data.status
+            elif isinstance(segment_data, dict) and 'status' in segment_data:
+                # It's a dictionary
+                status = segment_data['status']
+            else:
+                # Default to downloading if status is unknown
+                status = "downloading"
+            
+            if status == "downloading":
+                active_count += 1
+            elif status == "completed":
+                completed_count += 1
+        
+        self.stats.active_connections = active_count
+        self.stats.completed_connections = completed_count
         self.stats.total_connections = len(self.stats.segments)
 
         # Calculate overall speed (sum of all active segment speeds)
-        active_speeds = [
-            s.speed
-            for s in self.stats.segments.values()
-            if s.status == "downloading" and s.speed > 0
-        ]
+        active_speeds = []
+        for segment_data in self.stats.segments.values():
+            # Handle both SegmentProgress objects and dictionaries
+            if hasattr(segment_data, 'status') and hasattr(segment_data, 'speed'):
+                # It's a SegmentProgress object
+                status = segment_data.status
+                speed = segment_data.speed
+            elif isinstance(segment_data, dict):
+                # It's a dictionary
+                status = segment_data.get('status', 'downloading')
+                speed = segment_data.get('speed', 0.0)
+            else:
+                continue
+            
+            if status == "downloading" and speed > 0:
+                active_speeds.append(speed)
 
         if active_speeds:
             self.stats.speed = sum(active_speeds)
@@ -407,6 +438,35 @@ class EnhancedDownloader(LoggerMixin):
         self.stats.total_size = self.download_info.total_size
         self.stats.total_connections = len(self.segments)
 
+        # Create session for this download to enable pause/resume
+        session_id = getattr(self, '_current_session_id', None)
+        try:
+            from fetchx_cli.core.session import SessionManager
+            import hashlib
+            
+            session_manager = SessionManager()
+            
+            if not session_id:
+                # Create unique session ID only if not already set
+                url_hash = hashlib.md5(self.url.encode()).hexdigest()[:8]
+                timestamp = int(time.time())
+                session_id = f"download_{url_hash}_{timestamp}"
+                self._current_session_id = session_id
+            
+            # Create session in database with current download info
+            session_manager.create_session(
+                session_id=session_id,
+                url=self.url,
+                download_info=self.download_info,
+                segments=self.segments,
+                headers=self.headers
+            )
+            
+            self.log_info(f"Created session for download: {session_id}")
+            
+        except Exception as e:
+            self.log_warning(f"Failed to create session: {e}")
+
         self.log_info(
             f"Starting download with {len(self.segments)} segments",
             segments=len(self.segments),
@@ -448,6 +508,15 @@ class EnhancedDownloader(LoggerMixin):
             # Merge segments and move to final location
             await self._finalize_download()
 
+            # Mark session as completed
+            session_id = getattr(self, '_current_session_id', None)
+            if session_id:
+                try:
+                    session_manager = SessionManager()
+                    session_manager.complete_session(session_id)
+                except Exception as e:
+                    self.log_warning(f"Failed to complete session: {e}")
+
             self.log_info(
                 "Download completed successfully",
                 file_path=self.download_info.file_path,
@@ -455,6 +524,15 @@ class EnhancedDownloader(LoggerMixin):
             return self.download_info.file_path
 
         except Exception as e:
+            # Mark session as failed
+            session_id = getattr(self, '_current_session_id', None)
+            if session_id:
+                try:
+                    session_manager = SessionManager()
+                    session_manager.fail_session(session_id, str(e))
+                except:
+                    pass
+                    
             # Clean up on failure
             await self._cleanup_segments()
             self._cleanup_temp_directory()
@@ -546,6 +624,9 @@ class EnhancedDownloader(LoggerMixin):
 
         self.log_info("Pausing download")
 
+        # Save session state before pausing
+        await self._save_session_state()
+
         # Pause all segments
         for segment in self.segments:
             segment.is_paused = True
@@ -560,17 +641,274 @@ class EnhancedDownloader(LoggerMixin):
             if not task.done():
                 task.cancel()
 
+    async def _save_session_state(self):
+        """Save current download state to session for resume capability."""
+        try:
+            from fetchx_cli.core.session import SessionManager
+            
+            session_manager = SessionManager()
+            
+            # Use existing session ID if available, otherwise create new one
+            session_id = getattr(self, '_current_session_id', None)
+            
+            if not session_id:
+                # Create unique session ID only if none exists
+                import hashlib
+                url_hash = hashlib.md5(self.url.encode()).hexdigest()[:8]
+                timestamp = int(time.time())
+                session_id = f"pause_{url_hash}_{timestamp}"
+                self._current_session_id = session_id
+            
+            # Save or update session with current state
+            if self.download_info:
+                # Check if session already exists
+                existing_session = session_manager.get_session(session_id)
+                
+                if existing_session:
+                    # Update existing session
+                    session_manager.update_session(
+                        session_id=session_id,
+                        stats=self.stats,
+                        segments=self.segments,
+                        status="paused"
+                    )
+                    self.log_info(f"Updated existing session: {session_id}")
+                else:
+                    # Create new session
+                    session_manager.create_session(
+                        session_id=session_id,
+                        url=self.url,
+                        download_info=self.download_info,
+                        segments=self.segments,
+                        headers=self.headers
+                    )
+                    
+                    # Update with current progress and mark as paused
+                    session_manager.update_session_progress(session_id, self.stats)
+                    session_manager.pause_session(session_id)
+                    
+                    self.log_info(f"Created new session: {session_id}")
+                
+        except Exception as e:
+            self.log_warning(f"Failed to save session state: {e}")
+
+    def set_session_id(self, session_id: str):
+        """Set the session ID for this downloader."""
+        self._current_session_id = session_id
+
+    def get_session_id(self) -> Optional[str]:
+        """Get the current session ID."""
+        return getattr(self, '_current_session_id', None)
+
+    async def _update_session_progress(self):
+        """Update session with current progress."""
+        try:
+            session_id = getattr(self, '_current_session_id', None)
+            if session_id:
+                from fetchx_cli.core.session import SessionManager
+                session_manager = SessionManager()
+                session_manager.update_session_progress(session_id, self.stats)
+        except Exception as e:
+            self.log_warning(f"Failed to update session progress: {e}")
+
+    @classmethod
+    async def create_from_session(cls, session_id: str) -> Optional['EnhancedDownloader']:
+        """Create a downloader instance from a saved session."""
+        try:
+            from fetchx_cli.core.session import SessionManager
+            
+            session_manager = SessionManager()
+            session = session_manager.get_session(session_id)
+            
+            if not session:
+                return None
+            
+            # Create downloader instance
+            download_info = DownloadInfo(**session.download_info)
+            
+            downloader = cls(
+                url=session.url,
+                output_dir=os.path.dirname(download_info.file_path),
+                filename=download_info.filename,
+                headers=session.headers
+            )
+            
+            # Restore state
+            downloader.download_info = download_info
+            downloader.segments = [DownloadSegment(**segment_data) for segment_data in session.segments]
+            downloader.stats = DownloadStats(**session.stats)
+            downloader._current_session_id = session_id
+            
+            # Mark session as active
+            session_manager.resume_session(session_id)
+            
+            return downloader
+            
+        except Exception as e:
+            print(f"Failed to create downloader from session: {e}")
+            return None
+
     async def resume(self):
         """Resume the download."""
-        if not self.is_paused:
-            return
-
+        # Don't return early if not paused - we might need to finalize
         self.is_paused = False
         self.stats.is_paused = False
 
         self.log_info("Resuming download")
 
-        # Resume all segments
+        # Validate temp directory exists
+        if self.download_info and self.download_info.temp_dir:
+            if not os.path.exists(self.download_info.temp_dir):
+                self.log_error(f"Temp directory missing: {self.download_info.temp_dir}")
+                
+                # Mark session as failed
+                session_id = getattr(self, '_current_session_id', None)
+                if session_id:
+                    try:
+                        from fetchx_cli.core.session import SessionManager
+                        session_manager = SessionManager()
+                        session_manager.fail_session(session_id, "Temp directory missing")
+                    except Exception as e:
+                        self.log_warning(f"Failed to mark session as failed: {e}")
+                
+                return None  # Signal failure to calling code
+
+        # Update session status
+        session_id = getattr(self, '_current_session_id', None)
+        if session_id:
+            try:
+                from fetchx_cli.core.session import SessionManager
+                session_manager = SessionManager()
+                session_manager.resume_session(session_id)
+            except Exception as e:
+                self.log_warning(f"Failed to update session status: {e}")
+
+        # Check if segments exist and are complete
+        all_segments_complete = True
+        segments_missing = 0
+        for segment in self.segments:
+            # Check if the segment file exists and has the expected size
+            if os.path.exists(segment.file_path):
+                file_size = os.path.getsize(segment.file_path)
+                expected_size = segment.end - segment.start + 1 if segment.end != -1 else file_size
+                
+                # ALWAYS update the downloaded amount to the current file size
+                segment.downloaded = file_size
+                
+                if file_size >= expected_size * 0.99:  # 99% threshold for completion
+                    segment.completed = True
+                    self.log_info(f"Segment {segment.id} found complete: {file_size} bytes")
+                else:
+                    segment.completed = False  # Ensure it's marked as incomplete
+                    all_segments_complete = False
+                    self.log_info(f"Segment {segment.id} incomplete: {file_size}/{expected_size} bytes")
+            else:
+                all_segments_complete = False
+                segments_missing += 1
+                segment.downloaded = 0  # No file means 0 downloaded
+                segment.completed = False
+                self.log_info(f"Segment {segment.id} file not found: {segment.file_path}")
+
+        # If ALL segment files are missing, this is likely a broken session
+        if segments_missing == len(self.segments):
+            self.log_error(f"All {segments_missing} segment files are missing - session appears broken")
+            
+            # Mark session as failed
+            session_id = getattr(self, '_current_session_id', None)
+            if session_id:
+                try:
+                    from fetchx_cli.core.session import SessionManager
+                    session_manager = SessionManager()
+                    session_manager.fail_session(session_id, "All segment files missing")
+                except Exception as e:
+                    self.log_warning(f"Failed to mark session as failed: {e}")
+            
+            return None  # Signal failure to calling code
+        
+        # Update overall downloaded amount
+        total_downloaded = sum(segment.downloaded for segment in self.segments)
+        self.stats.downloaded = total_downloaded
+        
+        # Initialize stats segments for incomplete segments
+        for segment in self.segments:
+            if segment.id not in self.stats.segments:
+                # Create new SegmentProgress for this segment
+                segment_size = segment.end - segment.start + 1 if segment.end != -1 else 0
+                self.stats.segments[segment.id] = SegmentProgress(
+                    segment_id=segment.id,
+                    downloaded=segment.downloaded,
+                    total_size=segment_size,
+                    speed=0.0,
+                    eta=None,
+                    status="downloading" if not segment.completed else "completed",
+                    start_byte=segment.start,
+                    end_byte=segment.end,
+                )
+            else:
+                # Update existing segment progress
+                segment_progress = self.stats.segments[segment.id]
+                if hasattr(segment_progress, 'downloaded'):
+                    segment_progress.downloaded = segment.downloaded
+                    segment_progress.status = "downloading" if not segment.completed else "completed"
+                elif isinstance(segment_progress, dict):
+                    # Convert dict to SegmentProgress object
+                    segment_size = segment.end - segment.start + 1 if segment.end != -1 else 0
+                    self.stats.segments[segment.id] = SegmentProgress(
+                        segment_id=segment.id,
+                        downloaded=segment.downloaded,
+                        total_size=segment_size,
+                        speed=segment_progress.get('speed', 0.0),
+                        eta=segment_progress.get('eta'),
+                        status="downloading" if not segment.completed else "completed",
+                        start_byte=segment.start,
+                        end_byte=segment.end,
+                    )
+        
+        # Check if download is already complete and just needs finalization
+        if all_segments_complete:
+            self.log_info("All segments complete, proceeding to finalization")
+            
+            # Check if final file already exists
+            if os.path.exists(self.download_info.file_path):
+                self.log_info(f"Final file already exists: {self.download_info.file_path}")
+                
+                # Mark session as completed
+                if session_id:
+                    try:
+                        session_manager = SessionManager()
+                        session_manager.complete_session(session_id)
+                    except Exception as e:
+                        self.log_warning(f"Failed to complete session: {e}")
+                
+                return self.download_info.file_path
+            
+            # Finalize the download (merge segments and move to final location)
+            try:
+                await self._finalize_download()
+                
+                # Mark session as completed
+                if session_id:
+                    try:
+                        session_manager = SessionManager()
+                        session_manager.complete_session(session_id)
+                    except Exception as e:
+                        self.log_warning(f"Failed to complete session: {e}")
+                
+                self.log_info(f"Download finalized successfully: {self.download_info.file_path}")
+                return self.download_info.file_path
+                
+            except Exception as e:
+                self.log_error(f"Failed to finalize download: {e}")
+                # Mark session as failed
+                if session_id:
+                    try:
+                        session_manager = SessionManager()
+                        session_manager.fail_session(session_id, str(e))
+                    except:
+                        pass
+                raise e
+
+        # Resume incomplete segments
         for segment in self.segments:
             if not segment.completed:
                 segment.is_paused = False
@@ -580,9 +918,12 @@ class EnhancedDownloader(LoggerMixin):
         # Update stats
         self._update_overall_stats()
 
-        # Restart incomplete segments
+        # Download incomplete segments
         incomplete_segments = [s for s in self.segments if not s.completed]
+        
         if incomplete_segments:
+            self.log_info(f"Resuming download of {len(incomplete_segments)} incomplete segments")
+            
             tasks = []
             for segment in incomplete_segments:
                 conn_manager = ConnectionManager(
@@ -599,7 +940,37 @@ class EnhancedDownloader(LoggerMixin):
                 tasks.append(task)
 
             self._segment_tasks = tasks
-            await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Wait for completion and handle session updates
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Finalize download
+                await self._finalize_download()
+                
+                # Mark session as completed
+                if session_id:
+                    try:
+                        session_manager = SessionManager()
+                        session_manager.complete_session(session_id)
+                    except Exception as e:
+                        self.log_warning(f"Failed to complete session: {e}")
+                
+                return self.download_info.file_path
+                
+            except Exception as e:
+                # Mark session as failed
+                if session_id:
+                    try:
+                        session_manager = SessionManager()
+                        session_manager.fail_session(session_id, str(e))
+                    except:
+                        pass
+                raise e
+
+        # Should not reach here, but just in case
+        self.log_warning("Resume method reached unexpected state")
+        return self.download_info.file_path
 
     async def cancel(self):
         """Cancel the download."""
