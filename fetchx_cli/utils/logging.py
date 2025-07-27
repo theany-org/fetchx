@@ -227,8 +227,8 @@ class FetchXLogger:
             self.error(f"Failed to get log stats: {e}", "logging")
             return {}
 
-    def set_log_level(self, level: str):
-        """Set the console log level."""
+    def set_log_level(self, level: str, save_to_config: bool = True):
+        """Set the console log level and optionally save to configuration."""
         try:
             level_map = {
                 "DEBUG": logging.DEBUG,
@@ -239,20 +239,47 @@ class FetchXLogger:
             }
 
             if level.upper() in level_map:
+                target_level = level_map[level.upper()]
+                handler_found = False
+                
                 # Update console handler level
                 for handler in self.logger.handlers:
                     if isinstance(handler, logging.StreamHandler) and not isinstance(
                         handler, SQLiteLogHandler
                     ):
-                        handler.setLevel(level_map[level.upper()])
+                        handler.setLevel(target_level)
+                        handler_found = True
                         break
+
+                if not handler_found:
+                    print(f"[FETCHX] Warning: No console handler found to update!", file=sys.stderr)
+                
+                # Also set the level on any child loggers that might exist
+                for name in logging.Logger.manager.loggerDict:
+                    if name.startswith("fetchx."):
+                        child_logger = logging.getLogger(name)
+                        if child_logger.level != logging.NOTSET:
+                            # Reset child logger level to inherit from parent
+                            child_logger.setLevel(logging.NOTSET)
+                            print(f"[FETCHX] Reset child logger '{name}' level to inherit from parent", file=sys.stderr)
+
+                # Save to configuration if requested
+                if save_to_config:
+                    try:
+                        from fetchx_cli.config.settings import get_config
+                        config = get_config()
+                        config.update_setting("logging", "log_level", level.upper())
+                        print(f"[FETCHX] Saved log level '{level.upper()}' to configuration", file=sys.stderr)
+                    except Exception as config_error:
+                        print(f"[FETCHX] Warning: Could not save log level to config: {config_error}", file=sys.stderr)
 
                 self.info(f"Console log level set to {level.upper()}", "logging")
             else:
-                self.warning(f"Invalid log level: {level}", "logging")
+                self.warning(f"Invalid log level: {level}. Valid levels: DEBUG, INFO, WARNING, ERROR, CRITICAL", "logging")
 
         except Exception as e:
             self.error(f"Failed to set log level: {e}", "logging")
+            print(f"[FETCHX] Exception in set_log_level: {e}", file=sys.stderr)
 
 
 class LoggerMixin:
@@ -334,9 +361,29 @@ def log_exception(message: str, module: str = "general", **extra):
 
 
 # Setup function to initialize logging
-def setup_logging(console_level: str = "INFO"):
+def setup_logging(console_level: str = None, save_if_provided: bool = False):
     """Initialize the logging system."""
     logger = get_logger()
-    logger.set_log_level(console_level)
+    
+    # If no level specified, try to load from config
+    if console_level is None:
+        try:
+            from fetchx_cli.config.settings import get_config
+            config = get_config()
+            console_level = config.get_setting("logging", "log_level")
+            print(f"[FETCHX] Loaded log level from config: {console_level}", file=sys.stderr)
+            save_to_config = False  # Don't save since we just loaded it
+        except Exception as e:
+            console_level = "INFO"  # Default fallback
+            print(f"[FETCHX] Could not load log level from config, using default INFO: {e}", file=sys.stderr)
+            save_to_config = False  # Don't save the default
+    else:
+        # Level was explicitly provided
+        save_to_config = save_if_provided
+        if save_if_provided:
+            print(f"[FETCHX] Using explicitly provided log level: {console_level}", file=sys.stderr)
+    
+    # Set the log level
+    logger.set_log_level(console_level, save_to_config=save_to_config)
     logger.info("Logging system initialized", "logging")
     return logger

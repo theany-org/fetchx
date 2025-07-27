@@ -35,14 +35,14 @@ logger = get_logger()
 @click.option("--version", is_flag=True, help="Show version information")
 @click.option(
     "--log-level",
-    default="INFO",
-    help="Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    default=None,
+    help="Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL). If specified, saves as new default. Use 'fetchx log-level' to manage saved settings.",
 )
 @click.pass_context
 def fetchx(ctx, version, log_level):
     """FETCHX Internet Download Manager - A powerful command-line download manager."""
-    # Initialize logging
-    setup_logging(log_level)
+    # Initialize logging - save to config if user explicitly provided log-level
+    setup_logging(log_level, save_if_provided=(log_level is not None))
     logger.info("FETCHX IDM started", "cli")
 
     if version:
@@ -1348,6 +1348,46 @@ temp.add_command(temp_status, name="status")
 # Register the cleanup command with main fetchx group
 fetchx.add_command(cleanup)
 
+
+@fetchx.command()
+@click.argument('level', required=False, type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], case_sensitive=False))
+def log_level(level):
+    """View or set the persistent log level configuration."""
+    from fetchx_cli.config.settings import get_config
+    
+    config = get_config()
+    
+    if level is None:
+        # Show current setting
+        try:
+            current_level = config.get_setting("logging", "log_level")
+            console.print(f"\n[green]Current saved log level:[/green] {current_level}")
+            console.print(f"[dim]This level will be used when no --log-level is specified[/dim]")
+        except Exception as e:
+            console.print(f"[red]Error reading log level from config:[/red] {e}")
+            console.print(f"[yellow]Using default: INFO[/yellow]")
+        
+        console.print(f"\n[yellow]To change the saved log level:[/yellow]")
+        console.print(f"  fetchx log-level DEBUG    # Set to DEBUG")
+        console.print(f"  fetchx log-level INFO     # Set to INFO")
+        console.print(f"  fetchx log-level WARNING  # Set to WARNING")
+        console.print(f"  fetchx log-level ERROR    # Set to ERROR")
+        console.print(f"  fetchx log-level CRITICAL # Set to CRITICAL")
+    else:
+        # Set new level
+        try:
+            config.update_setting("logging", "log_level", level.upper())
+            console.print(f"[green]✅ Log level saved to:[/green] {level.upper()}")
+            console.print(f"[dim]This will be used for future fetchx commands (when --log-level is not specified)[/dim]")
+            
+            # Also update the current session
+            logger.set_log_level(level.upper(), save_to_config=False)  # Don't save again
+            console.print(f"[green]✅ Current session log level updated to:[/green] {level.upper()}")
+            
+        except Exception as e:
+            console.print(f"[red]Error saving log level:[/red] {e}")
+            return
+        
 
 # Entry point for setuptools
 def main():
