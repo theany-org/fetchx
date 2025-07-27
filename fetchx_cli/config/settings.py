@@ -70,6 +70,13 @@ class CleanupSettings:
 
 
 @dataclass
+class LoggingSettings:
+    """Logging configuration settings."""
+
+    log_level: str = DEFAULT_LOG_LEVEL
+
+
+@dataclass
 class AppConfig:
     """Main application configuration with temporary directory support."""
 
@@ -79,6 +86,7 @@ class AppConfig:
     paths: PathSettings
     temp: TempSettings  # NEW
     cleanup: CleanupSettings  # NEW
+    logging: LoggingSettings  # NEW
 
     def __init__(self):
         self.download = DownloadSettings()
@@ -87,6 +95,7 @@ class AppConfig:
         self.paths = PathSettings()
         self.temp = TempSettings()  # NEW
         self.cleanup = CleanupSettings()  # NEW
+        self.logging = LoggingSettings()  # NEW
 
 
 class ConfigManager:
@@ -107,7 +116,7 @@ class ConfigManager:
             config = AppConfig()
 
             # Load all sections
-            sections = ["download", "display", "queue", "paths", "temp", "cleanup"]
+            sections = ["download", "display", "queue", "paths", "temp", "cleanup", "logging"]
 
             for section in sections:
                 if section in all_settings:
@@ -144,6 +153,7 @@ class ConfigManager:
                 "paths": asdict(config.paths),
                 "temp": asdict(config.temp),  # NEW
                 "cleanup": asdict(config.cleanup),  # NEW
+                "logging": asdict(config.logging),  # NEW
             }
 
             for section_name, section_dict in sections.items():
@@ -211,6 +221,14 @@ class ConfigManager:
                 if "age_days" in key and value < 0:
                     raise ValueError("Cleanup age must be non-negative")
 
+            # NEW: Validation for logging settings
+            if section == "logging":
+                if key == "log_level":
+                    valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+                    if value.upper() not in valid_levels:
+                        raise ValueError(f"Log level must be one of: {', '.join(valid_levels)}")
+                    value = value.upper()  # Normalize to uppercase
+
             # Update in memory
             setattr(section_obj, key, value)
 
@@ -254,6 +272,7 @@ class ConfigManager:
             "paths": asdict(self.config.paths),
             "temp": asdict(self.config.temp),  # NEW
             "cleanup": asdict(self.config.cleanup),  # NEW
+            "logging": asdict(self.config.logging),  # NEW
         }
 
     def reset_to_defaults(self):
