@@ -1,7 +1,8 @@
 """Enhanced configuration management with temporary directory support."""
 
+import os
 from dataclasses import asdict, dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fetchx_cli.core.database import get_database
 
@@ -70,6 +71,15 @@ class CleanupSettings:
 
 
 @dataclass
+class FolderSettings:
+    """Organized folder structure settings."""
+
+    use_organized_folders: bool = DEFAULT_USE_ORGANIZED_FOLDERS
+    organize_by_extension: bool = DEFAULT_ORGANIZE_BY_EXTENSION
+    custom_download_dir: Optional[str] = DEFAULT_CUSTOM_DOWNLOAD_DIR
+
+
+@dataclass
 class LoggingSettings:
     """Logging configuration settings."""
 
@@ -86,6 +96,7 @@ class AppConfig:
     paths: PathSettings
     temp: TempSettings  # NEW
     cleanup: CleanupSettings  # NEW
+    folders: FolderSettings  # NEW
     logging: LoggingSettings  # NEW
 
     def __init__(self):
@@ -95,6 +106,7 @@ class AppConfig:
         self.paths = PathSettings()
         self.temp = TempSettings()  # NEW
         self.cleanup = CleanupSettings()  # NEW
+        self.folders = FolderSettings()  # NEW
         self.logging = LoggingSettings()  # NEW
 
 
@@ -116,7 +128,7 @@ class ConfigManager:
             config = AppConfig()
 
             # Load all sections
-            sections = ["download", "display", "queue", "paths", "temp", "cleanup", "logging"]
+            sections = ["download", "display", "queue", "paths", "temp", "cleanup", "folders", "logging"]
 
             for section in sections:
                 if section in all_settings:
@@ -153,6 +165,7 @@ class ConfigManager:
                 "paths": asdict(config.paths),
                 "temp": asdict(config.temp),  # NEW
                 "cleanup": asdict(config.cleanup),  # NEW
+                "folders": asdict(config.folders),  # NEW
                 "logging": asdict(config.logging),  # NEW
             }
 
@@ -272,6 +285,7 @@ class ConfigManager:
             "paths": asdict(self.config.paths),
             "temp": asdict(self.config.temp),  # NEW
             "cleanup": asdict(self.config.cleanup),  # NEW
+            "folders": asdict(self.config.folders),  # NEW
             "logging": asdict(self.config.logging),  # NEW
         }
 

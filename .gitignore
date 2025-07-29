@@ -202,3 +202,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .claude/
+
+tests/
+Makefile
+pytest.ini

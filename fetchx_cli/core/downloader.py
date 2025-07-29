@@ -15,6 +15,7 @@ from fetchx_cli.utils.exceptions import (DownloadException,
                                          InsufficientSpaceException,
                                          NetworkException)
 from fetchx_cli.utils.file_utils import FileManager
+from fetchx_cli.utils.folder_manager import FolderManager
 from fetchx_cli.utils.logging import LoggerMixin
 from fetchx_cli.utils.network import HttpClient, NetworkUtils
 
@@ -90,14 +91,23 @@ class EnhancedDownloader(LoggerMixin):
         output_dir: Optional[str] = None,
         filename: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        use_organized_folders: bool = True,
     ):
         self.url = url
         self.headers = headers or {}
         self.config = get_config().config
+        self.use_organized_folders = use_organized_folders
 
-        # Setup paths
-        self.output_dir = output_dir or self.config.paths.download_dir
-        FileManager.ensure_directory(self.output_dir)
+        # Setup folder management
+        if self.use_organized_folders and not output_dir:
+            # Use organized folder structure
+            self.folder_manager = FolderManager()
+            self.output_dir = None  # Will be determined per file
+        else:
+            # Use traditional single directory approach
+            self.folder_manager = None
+            self.output_dir = output_dir or self.config.paths.download_dir
+            FileManager.ensure_directory(self.output_dir)
 
         # Initialize state
         self.download_info: Optional[DownloadInfo] = None
@@ -180,9 +190,17 @@ class EnhancedDownloader(LoggerMixin):
             temp_dir = self._create_temp_directory(filename)
             self._temp_dir = temp_dir
 
-            # Final file path in output directory
-            file_path = os.path.join(self.output_dir, filename)
-            file_path = FileManager.get_unique_filename(file_path)
+            # Determine final file path
+            if self.folder_manager:
+                # Use organized folder structure
+                file_path = self.folder_manager.get_organized_download_path(filename, ensure_unique=True)
+                self.log_info(f"Using organized folder structure for: {filename}", 
+                            category=self.folder_manager.get_category_for_file(filename),
+                            organized_path=file_path)
+            else:
+                # Use traditional single directory approach
+                file_path = os.path.join(self.output_dir, filename)
+                file_path = FileManager.get_unique_filename(file_path)
 
             # Check disk space (both temp and final locations)
             if info.get("content_length"):
@@ -194,8 +212,9 @@ class EnhancedDownloader(LoggerMixin):
                     )
 
                 # Check final directory space
+                final_dir = os.path.dirname(file_path) if self.folder_manager else self.output_dir
                 if not FileManager.check_disk_space(
-                    self.output_dir, info["content_length"]
+                    final_dir, info["content_length"]
                 ):
                     self._cleanup_temp_directory()
                     raise InsufficientSpaceException(

@@ -11,6 +11,11 @@ pyperclip
 # Development dependencies
 pytest
 pytest-asyncio
+pytest-cov
+pytest-mock
+pytest-xdist
+aioresponses
 black
 flake8
 mypy
+coverage

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 # Default directories
-DEFAULT_DOWNLOAD_DIR = os.path.join(Path.home(), "Downloads", "fetchx_idm")
+DEFAULT_DOWNLOAD_DIR = os.path.join(Path.home(), "Downloads", "FetchX")
 DEFAULT_SESSION_DIR = os.path.join(Path.home(), ".fetchx_idm", "sessions")
 DEFAULT_LOG_DIR = os.path.join(Path.home(), ".fetchx_idm", "logs")
 
@@ -40,6 +40,11 @@ DEFAULT_QUEUE_SAVE_INTERVAL = 5
 DEFAULT_SESSION_CLEANUP_AGE_DAYS = 30
 DEFAULT_LOG_CLEANUP_AGE_DAYS = 7
 DEFAULT_AUTO_CLEANUP_ON_START = True
+
+# Organized folder settings
+DEFAULT_USE_ORGANIZED_FOLDERS = True
+DEFAULT_ORGANIZE_BY_EXTENSION = True
+DEFAULT_CUSTOM_DOWNLOAD_DIR = None  # None means use OS default Downloads/FetchX
 
 # Logging settings
 DEFAULT_LOG_LEVEL = "INFO"

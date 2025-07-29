@@ -1,257 +1,153 @@
-# FETCHX - Internet Download Manager
+# FetchX
 
-A professional-grade, ultra-fast command-line Internet Download Manager built with Python. Features advanced multi-threaded downloads, intelligent file merging, comprehensive queue management, and enterprise-level monitoring capabilities.
+A fast, powerful command-line download manager for modern Python environments.
 
-## 🚀 Key Features
+## Features
 
-### **Core Performance**
-- **Ultra-Fast Downloads**: Up to 100x performance improvement with optimized multi-connection downloading
-- **Smart File Merging**: Intelligent strategy selection based on file size (sync/async/streaming)
-- **Advanced Progress Tracking**: Real-time segment monitoring with detailed connection statistics
-- **Resume Capability**: Robust pause/resume functionality for interrupted downloads
+- **Multi-threaded downloads** with configurable connections
+- **Queue management** with persistent SQLite storage  
+- **Resume capability** for interrupted downloads
+- **Rich terminal interface** with real-time progress tracking
+- **Comprehensive configuration** with backup/restore options
+- **Smart cleanup** and maintenance tools
 
-### **Enterprise Management**
-- **Persistent Queue System**: SQLite-backed download queue with full ACID compliance
-- **Comprehensive Configuration**: Hierarchical settings with validation and backup/restore
-- **Advanced Logging**: Structured logging with real-time monitoring and export capabilities
-- **Performance Analytics**: Detailed statistics and performance metrics
-
-### **Professional CLI**
-- **Rich Terminal Interface**: Color-coded tables, progress bars, and interactive displays
-- **Real-time Monitoring**: Live connection tracking with enhanced visualization
-- **Data Management**: Export/import capabilities for configuration and analytics
-- **Intelligent Cleanup**: Automated maintenance with configurable retention policies
-
-## 📊 Performance Metrics
-
-- **Download Speed**: 300-2000+ KB/s per segment (vs 3-4 KB/s in basic implementations)
-- **Optimal Connections**: Auto-configurable (recommended: 4-8 connections)
-- **Memory Efficient**: Smart buffer management for files of any size (2MB chunks)
-- **Network Optimized**: 200 connection pool with intelligent keep-alive
-- **Merge Performance**: Size-based strategy selection (sync/async/streaming)
-- **Progress Updates**: Optimized to every 50MB vs every 8KB (6000x reduction in overhead)
-
-## 🛠 Installation
+## Installation
 
 ### Prerequisites
-- **Python 3.8+** (3.9+ recommended for optimal performance)
-- **pip package manager**
+- Python 3.8 or higher
+- pip package manager
 
-### Quick Install
+### Install from source
 ```bash
-# Clone and install
-git clone https://github.com/theny-org/fetchx.git
+git clone https://github.com/theany-org/fetchx.git
 cd fetchx
-pip install -r requirements.txt
 pip install -e .
+```
 
-# Verify installation
+### Verify installation
+```bash
 fetchx --version
 ```
 
-### Alternative Installation
+## Quick Start
+
+### Download a file
 ```bash
-# Direct module execution
-python -m fetchx_cli.main --version
+# Basic download
+fetchx download https://example.com/file.zip
 
-# Create alias for convenience
-echo "alias fx='python -m fetchx_cli.main'" >> ~/.bashrc
-source ~/.bashrc
-```
-
-## ⚡ Quick Start
-
-### **Instant Download**
-```bash
-# Basic high-performance download
-fetchx download https://example.com/largefile.zip
-
-# Optimized for fast connections
-fetchx download https://example.com/file.zip --connections 6 --detailed
-
-# Custom location with progress monitoring
+# Download with custom settings
 fetchx download https://example.com/file.zip \
-  --output ~/Downloads/MyFiles \
-  --filename custom_name.zip \
-  --connections 8 \
-  --detailed
+  --output ~/Downloads \
+  --connections 4 \
+  --filename custom_name.zip
 ```
 
-### **Queue Management Workflow**
+### Queue management
 ```bash
-# Add multiple downloads
-fetchx add https://example.com/file1.zip --connections 4
+# Add downloads to queue
+fetchx add https://example.com/file1.zip
 fetchx add https://example.com/file2.mp4 --connections 6
-fetchx add https://example.com/file3.pdf --output ~/Documents
 
-# Monitor queue status
-fetchx queue --detailed
+# View queue status
+fetchx queue
 
-# Start processing with enhanced monitoring
-fetchx start --enhanced
-
-# Manage active downloads
-fetchx cancel a1b2c3d4    # Cancel by ID
-fetchx remove e5f6g7h8    # Remove from queue
+# Process queue
+fetchx start
 ```
 
-## ⚙️ Configuration & Management
-
-### **Smart Configuration System**
+### Configuration
 ```bash
-# Interactive configuration view
-fetchx config                           # View all settings in tree format
-fetchx config --section download        # View specific section
-fetchx config --section download --key max_connections  # Get specific setting
+# View current configuration
+fetchx config
 
-# Update settings with validation
+# Update download settings
 fetchx config --section download --key max_connections --value 8
-fetchx config --section download --key timeout --value 60
-fetchx config --section queue --key max_concurrent_downloads --value 3
 
-# Configuration backup and restore
-fetchx config --export my_config.json   # Backup configuration
-fetchx config --import-config my_config.json  # Restore configuration
-fetchx config --reset                   # Reset to defaults
+# Export/import configuration
+fetchx config --export backup.json
+fetchx config --import-config backup.json
 ```
 
-### **Intelligent Cleanup**
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `download <url>` | Download a file directly |
+| `add <url>` | Add download to queue |
+| `queue` | Show queue status |
+| `start` | Process download queue |
+| `cancel <id>` | Cancel a download |
+| `remove <id>` | Remove download from queue |
+| `config` | Manage configuration |
+| `logs` | View application logs |
+| `stats` | Show usage statistics |
+| `cleanup` | Clean old files and data |
+
+## Configuration
+
+FetchX uses a hierarchical configuration system with the following main sections:
+
+### Download Settings
+- `max_connections`: Maximum concurrent connections (default: 8)
+- `timeout`: Network timeout in seconds (default: 30)
+- `chunk_size`: Download chunk size (default: 2MB)
+- `max_retries`: Maximum retry attempts (default: 3)
+
+### Queue Settings  
+- `max_concurrent_downloads`: Simultaneous downloads (default: 3)
+- `save_interval`: Queue persistence frequency (default: 5s)
+
+### Path Settings
+- `download_dir`: Default download directory
+- `session_dir`: Session storage location
+- `log_dir`: Log file location
+
+Use `fetchx config --section <section>` to view specific settings.
+
+## Performance Tips
+
+### Internet Speed Recommendations
+- **< 10 Mbps**: Use 1-2 connections
+- **10-50 Mbps**: Use 2-4 connections  
+- **50-100 Mbps**: Use 4-6 connections
+- **100+ Mbps**: Use 6-8 connections
+
+### Server-Specific Optimization
 ```bash
-# Smart maintenance
-fetchx cleanup --sessions --max-age 30  # Clean old sessions
-fetchx cleanup --logs --max-age 7       # Clean old logs
-fetchx cleanup --all --max-age 15       # Clean everything
-fetchx cleanup --all --dry-run          # Preview cleanup actions
-```
-
-### **SQLite Database Benefits**
-- **ACID Compliance**: Guaranteed data integrity
-- **Concurrent Access**: Multiple process support
-- **Efficient Indexing**: Fast queries and lookups
-- **Automatic Backup**: Built-in reliability features
-- **Cross-Platform**: Works on Windows, macOS, Linux
-
-## 🔍 Complete Configuration Reference
-
-### **Download Settings** (`fetchx config --section download`)
-| Setting | Default          | Description | Range |
-|---------|------------------|-------------|-------|
-| `max_connections` | 8                | Maximum concurrent connections per download | 1-32 |
-| `chunk_size` | 2MB              | Download chunk size for optimal performance | 64KB-32MB |
-| `timeout` | 30               | Network timeout in seconds | 10-300 |
-| `max_retries` | 3                | Maximum retry attempts for failed segments | 1-10 |
-| `retry_delay` | 2                | Delay between retries in seconds | 1-30 |
-| `user_agent` | FETCHX-IDM/0.1.0 | HTTP User-Agent string | Any string |
-| `connect_timeout` | 10               | Connection establishment timeout | 5-60 |
-| `read_timeout` | 30               | Data read timeout per chunk | 10-120 |
-
-### **Display Settings** (`fetchx config --section display`)
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `progress_update_interval` | 0.1 | Progress update frequency in seconds |
-| `show_speed` | true | Display download speed information |
-| `show_eta` | true | Show estimated time remaining |
-| `show_percentage` | true | Display progress percentage |
-
-### **Queue Settings** (`fetchx config --section queue`)
-| Setting | Default | Description | Range |
-|---------|---------|-------------|-------|
-| `max_concurrent_downloads` | 3 | Maximum simultaneous downloads | 1-10 |
-| `save_interval` | 5 | Queue persistence frequency in seconds | 1-60 |
-
-### **Path Settings** (`fetchx config --section paths`)
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `download_dir` | ~/Downloads/fetchx_idm | Default download directory |
-| `session_dir` | ~/.fetchx_idm/sessions | Legacy session storage |
-| `log_dir` | ~/.fetchx_idm/logs | Legacy log storage |
-
-## 📊 Performance Optimization Guide
-
-### **Connection Optimization Matrix**
-
-| Internet Speed | Recommended Connections | Use Case | Command |
-|----------------|------------------------|----------|---------|
-| < 10 Mbps | 1-2 | Slow/Mobile | `fetchx download [URL] --connections 2` |
-| 10-50 Mbps | 2-4 | Home/Office | `fetchx download [URL] --connections 4` |
-| 50-100 Mbps | 4-6 | Fast Broadband | `fetchx download [URL] --connections 6` |
-| 100+ Mbps | 6-8 | High-speed/Fiber | `fetchx download [URL] --connections 8` |
-| 1+ Gbps | 8-16 | Enterprise/Datacenter | `fetchx download [URL] --connections 16` |
-
-### **Server-Specific Optimizations**
-
-#### **High-Performance Servers**
-```bash
-# CDN and enterprise servers
+# High-performance servers (CDNs)
 fetchx config --section download --key max_connections --value 8
-fetchx config --section download --key timeout --value 30
-fetchx config --section queue --key max_concurrent_downloads --value 3
-```
 
-#### **Rate-Limited Servers**
-```bash
-# Social media, file sharing sites
+# Rate-limited servers 
 fetchx config --section download --key max_connections --value 2
-fetchx config --section download --key timeout --value 60
 fetchx config --section download --key retry_delay --value 5
-```
 
-#### **Unreliable Servers**
-```bash
-# Slow or unstable servers
-fetchx config --section download --key max_connections --value 1
+# Unreliable connections
 fetchx config --section download --key max_retries --value 10
 fetchx config --section download --key timeout --value 120
 ```
 
-### **Memory & Disk Optimization**
+## Development
 
-#### **Large File Downloads (>1GB)**
+### Requirements
+- Python 3.8+
+- Dependencies listed in `requirements.txt`
+
+### Running from source
 ```bash
-# Optimize for large files
-fetchx config --section download --key max_connections --value 6
-fetchx config --section download --key chunk_size --value 4194304  # 4MB chunks
-
-# Monitor merge performance
-fetchx logs --level INFO --module merger
+python -m fetchx_cli.main --help
 ```
 
-#### **Many Small Files**
+### Testing
 ```bash
-# Optimize for multiple small files
-fetchx config --section queue --key max_concurrent_downloads --value 5
-fetchx config --section download --key max_connections --value 2
+pip install -r requirements.txt
+python -m pytest
 ```
 
-### **Network Environment Optimization**
+## Contributing
 
-#### **Corporate Networks**
-```bash
-# Behind corporate firewall/proxy
-fetchx config --section download --key timeout --value 90
-fetchx config --section download --key connect_timeout --value 30
-fetchx config --section download --key max_connections --value 4
-```
+Contributions are welcome! Please read [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
-#### **Mobile/Metered Connections**
-```bash
-# Optimize for mobile data
-fetchx config --section download --key max_connections --value 1
-fetchx config --section queue --key max_concurrent_downloads --value 1
-fetchx config --section download --key timeout --value 60
-```
+## License
 
-## 🤝 Contributing & Development
-If you're interested in contributing, please read the [contribution guidelines](./CONTRIBUTING.md).
-
-## 📄 License & Legal
-This project is licensed under the **MIT License** - see the [LICENSE](./LICENSE.md) file for details.
-
-## **Getting Help**
-1. **📖 Check Documentation**: This README covers most use cases
-2. **🔍 Search Issues**: [GitHub Issues](https://github.com/theany-org/fetchx/issues)
-3. **🐛 Report Bugs**: [New Issue](https://github.com/theany-org/fetchx/issues/new?template=bug_report.md)
-4. **✨ Feature Issue**: [New Feature](https://github.com/theany-org/fetchx/issues/new?template=feature_request.md)
----
-
-**FETCHX IDM** - Built for speed, reliability, and professional use. 🚀
+This project is licensed under the MIT License - see [LICENSE.md](./LICENSE.md) for details.

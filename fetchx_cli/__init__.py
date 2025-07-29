@@ -1,6 +1,7 @@
 """FETCHX Internet Download Manager - A powerful command-line download manager."""
 
-__version__ = "0.1.1"
+from ._version import __version__
+
 __author__ = "FETCHX IDM Team"
 __description__ = "A powerful command-line Internet Download Manager"
 

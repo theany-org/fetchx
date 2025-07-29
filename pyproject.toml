@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fetchx"
-version = "0.1.1"
+dynamic = ["version"]
 description = "A powerful command-line Internet Download Manager"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -22,3 +22,6 @@ classifiers = [
 [project.scripts]
 fetchx = "fetchx_cli.main:main"
 fx = "fetchx_cli.main:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "fetchx_cli._version.__version__"}

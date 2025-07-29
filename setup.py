@@ -1,4 +1,10 @@
 from setuptools import find_packages, setup
+import os
+import sys
+
+# Add the package directory to the path to import version
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "fetchx_cli"))
+from _version import __version__
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -20,7 +26,7 @@ for line in lines:
 
 setup(
     name="fetchx",
-    version="0.1.1",
+    version=__version__,
     author="Fetchx IDM Team",
     author_email="",
     description="A powerful command-line Internet Download Manager",

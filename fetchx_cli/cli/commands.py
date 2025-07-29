@@ -18,12 +18,14 @@ from rich.tree import Tree
 from fetchx_cli.cli.interface import EnhancedCLIInterface
 from fetchx_cli.cli.validators import Validators
 from fetchx_cli.config.settings import get_config
+from fetchx_cli._version import __version__
 from fetchx_cli.core.database import get_database
 from fetchx_cli.core.downloader import EnhancedDownloader
 from fetchx_cli.core.queue import DownloadQueue
 from fetchx_cli.core.session import SessionManager
 from fetchx_cli.utils.exceptions import FetchXIdmException
 from fetchx_cli.utils.file_utils import FileManager
+from fetchx_cli.utils.folder_manager import FolderManager
 from fetchx_cli.utils.logging import get_logger, setup_logging
 
 console = Console()
@@ -46,7 +48,7 @@ def fetchx(ctx, version, log_level):
     logger.info("FETCHX IDM started", "cli")
 
     if version:
-        click.echo("FETCHX IDM v0.1.1")
+        click.echo(f"FETCHX IDM v{__version__}")
         return
 
     if ctx.invoked_subcommand is None:
@@ -63,6 +65,7 @@ def fetchx(ctx, version, log_level):
 @click.option("--header", multiple=True, help='Custom headers (format: "Key: Value")')
 @click.option("--no-progress", is_flag=True, help="Disable progress display")
 @click.option("--detailed", is_flag=True, help="Show detailed connection progress")
+@click.option("--no-organize", is_flag=True, help="Disable organized folder structure")
 def download(
     url: str,
     output: Optional[str],
@@ -71,6 +74,7 @@ def download(
     header: tuple,
     no_progress: bool,
     detailed: bool,
+    no_organize: bool,
 ):
     """Download a file from URL with enhanced progress display."""
     try:
@@ -99,10 +103,14 @@ def download(
             key, value = h.split(":", 1)
             headers[key.strip()] = value.strip()
 
+        # Determine if organized folders should be used
+        config = get_config()
+        use_organized = config.config.folders.use_organized_folders and not no_organize and not output
+
         # Run download with enhanced progress
         asyncio.run(
             _download_file_enhanced(
-                url, output, filename, connections, headers, not no_progress, detailed
+                url, output, filename, connections, headers, not no_progress, detailed, use_organized
             )
         )
 
@@ -126,9 +134,10 @@ async def _download_file_enhanced(
     headers: dict,
     show_progress: bool,
     detailed: bool,
+    use_organized_folders: bool = True,
 ):
     """Enhanced download function with detailed progress tracking."""
-    downloader = EnhancedDownloader(url, output_dir, filename, headers)
+    downloader = EnhancedDownloader(url, output_dir, filename, headers, use_organized_folders)
 
     # Get download info
     interface.print_info("🔍 Getting file information...")
@@ -250,12 +259,14 @@ async def _download_file_enhanced(
     "-c", "--connections", default=None, type=int, help="Number of connections"
 )
 @click.option("--header", multiple=True, help="Custom headers")
+@click.option("--no-organize", is_flag=True, help="Disable organized folder structure")
 def add(
     url: str,
     output: Optional[str],
     filename: Optional[str],
     connections: Optional[int],
     header: tuple,
+    no_organize: bool,
 ):
     """Add a download to the queue."""
     try:
@@ -277,6 +288,10 @@ def add(
                 raise click.BadParameter(f"Invalid header format: {h}")
             key, value = h.split(":", 1)
             headers[key.strip()] = value.strip()
+
+        # Determine folder settings
+        config = get_config()
+        use_organized = config.config.folders.use_organized_folders and not no_organize and not output
 
         # Add to queue
         interface.print_info("📥 Adding download to queue...")
@@ -1347,6 +1362,271 @@ temp.add_command(temp_status, name="status")
 
 # Register the cleanup command with main fetchx group
 fetchx.add_command(cleanup)
+
+
+@fetchx.group()
+def folders():
+    """Manage organized folder structure."""
+    pass
+
+
+@folders.command()
+@click.option("--detailed", is_flag=True, help="Show detailed folder information")
+def status(detailed: bool):
+    """Show organized folder structure status."""
+    try:
+        interface.print_info("📁 Checking organized folder structure...")
+        
+        config = get_config()
+        if not config.config.folders.use_organized_folders:
+            interface.print_warning("⚠️ Organized folders are disabled in configuration")
+            interface.print_info("   Use 'fetchx config folders use_organized_folders true' to enable")
+            return
+            
+        folder_manager = FolderManager(config.config.folders.custom_download_dir)
+        folder_info = folder_manager.get_folder_info()
+        
+        # Main info table
+        main_table = Table(title="📂 Folder Structure Overview", border_style="blue")
+        main_table.add_column("Setting", style="cyan")
+        main_table.add_column("Value", style="magenta")
+        
+        main_table.add_row("Base Downloads Directory", folder_info["base_downloads_dir"])
+        main_table.add_row("FetchX Root Directory", folder_info["root_path"])
+        main_table.add_row("Root Exists", "✅ Yes" if os.path.exists(folder_info["root_path"]) else "❌ No")
+        
+        console.print(main_table)
+        
+        # Categories table
+        categories_table = Table(title="📋 Category Folders", border_style="green")
+        categories_table.add_column("Category", style="cyan")
+        categories_table.add_column("Status", style="bold")
+        categories_table.add_column("Files", style="magenta")
+        categories_table.add_column("Size", style="yellow")
+        
+        if detailed:
+            categories_table.add_column("Extensions", style="dim")
+        
+        total_files = 0
+        total_size = 0
+        
+        for category, info in folder_info["categories"].items():
+            status = "✅ Exists" if info["exists"] else "❌ Missing"
+            files_count = str(info["file_count"])
+            size_str = format_size(info["total_size"]) if info["total_size"] > 0 else "-"
+            
+            total_files += info["file_count"]
+            total_size += info["total_size"]
+            
+            if detailed:
+                extensions = ", ".join(info["extensions"][:5])  # Show first 5 extensions
+                if len(info["extensions"]) > 5:
+                    extensions += f" (+{len(info['extensions'])-5} more)"
+                categories_table.add_row(category, status, files_count, size_str, extensions)
+            else:
+                categories_table.add_row(category, status, files_count, size_str)
+        
+        console.print(categories_table)
+        
+        # Summary
+        interface.print_info(f"\n📊 Summary: {total_files} files across all categories ({format_size(total_size)})")
+        
+        # Check permissions
+        permissions = folder_manager.validate_permissions()
+        permission_issues = [path for path, ok in permissions.items() if not ok]
+        
+        if permission_issues:
+            interface.print_warning(f"⚠️ Permission issues detected:")
+            for issue in permission_issues:
+                interface.print_warning(f"   • {issue}")
+        else:
+            interface.print_success("✅ All folder permissions are valid")
+            
+        # Statistics if detailed
+        if detailed:
+            stats = folder_manager.get_statistics()
+            if stats["total_files"] > 0:
+                interface.print_info(f"\n📈 Detailed Statistics:")
+                interface.print_info(f"   🏆 Largest category: {stats['largest_category']['name']} ({stats['largest_category']['files']} files, {format_size(stats['largest_category']['size'])})")
+                
+                if stats["extension_distribution"]:
+                    interface.print_info(f"   📄 Most common extensions:")
+                    sorted_exts = sorted(stats["extension_distribution"].items(), key=lambda x: x[1], reverse=True)[:5]
+                    for ext, count in sorted_exts:
+                        interface.print_info(f"      {ext}: {count} files")
+        
+    except Exception as e:
+        logger.error(f"Error checking folder status: {e}", "cli")
+        interface.print_error(f"Error checking folder status: {e}")
+        sys.exit(1)
+
+
+@folders.command()
+@click.option("--force", is_flag=True, help="Force creation even if some directories already exist")
+def create(force: bool):
+    """Create organized folder structure."""
+    try:
+        config = get_config()
+        
+        if not config.config.folders.use_organized_folders:
+            interface.print_warning("⚠️ Organized folders are disabled in configuration")
+            if not click.confirm("Enable organized folders and continue?"):
+                return
+            config.update_setting("folders", "use_organized_folders", True)
+            interface.print_success("✅ Enabled organized folders in configuration")
+        
+        interface.print_info("📁 Creating organized folder structure...")
+        
+        folder_manager = FolderManager(config.config.folders.custom_download_dir)
+        results = folder_manager.ensure_category_folders()
+        
+        # Show results
+        results_table = Table(title="📂 Folder Creation Results", border_style="blue")
+        results_table.add_column("Folder", style="cyan")
+        results_table.add_column("Status", style="bold")
+        results_table.add_column("Path", style="dim", width=50)
+        
+        success_count = 0
+        for category, success in results.items():
+            if category == "root":
+                continue
+                
+            status = "✅ Created/Verified" if success else "❌ Failed"
+            if success:
+                success_count += 1
+                
+            folder_path = folder_manager.get_category_folder_path(category)
+            # Truncate long paths
+            display_path = folder_path
+            if len(display_path) > 47:
+                display_path = "..." + display_path[-44:]
+                
+            results_table.add_row(category, status, display_path)
+        
+        console.print(results_table)
+        
+        if success_count == len(results) - 1:  # -1 for root
+            interface.print_success(f"✅ Successfully created/verified all {success_count} category folders")
+        else:
+            failed_count = len(results) - 1 - success_count
+            interface.print_warning(f"⚠️ Created {success_count} folders, {failed_count} failed")
+        
+        # Show folder info
+        folder_info = folder_manager.get_folder_info()
+        interface.print_info(f"\n📍 Root folder: {folder_info['root_path']}")
+        
+    except Exception as e:
+        logger.error(f"Error creating folders: {e}", "cli")
+        interface.print_error(f"Error creating folders: {e}")
+        sys.exit(1)
+
+
+@folders.command()
+@click.option("--category", help="Show files only from specific category")
+@click.option("--limit", default=20, type=int, help="Maximum number of files to show per category")
+def list_files(category: Optional[str], limit: int):
+    """List files in organized folders."""
+    try:
+        config = get_config()
+        folder_manager = FolderManager(config.config.folders.custom_download_dir)
+        folder_info = folder_manager.get_folder_info()
+        
+        if category:
+            # Show files from specific category
+            if category not in folder_info["categories"]:
+                interface.print_error(f"❌ Category '{category}' not found")
+                valid_categories = list(folder_info["categories"].keys())
+                interface.print_info(f"Valid categories: {', '.join(valid_categories)}")
+                return
+                
+            category_info = folder_info["categories"][category]
+            if not category_info["exists"]:
+                interface.print_warning(f"⚠️ Category folder '{category}' does not exist")
+                return
+                
+            interface.print_info(f"📁 Files in '{category}' category:")
+            _show_category_files(category_info["path"], limit)
+        else:
+            # Show files from all categories
+            for cat_name, cat_info in folder_info["categories"].items():
+                if cat_info["exists"] and cat_info["file_count"] > 0:
+                    interface.print_info(f"\n📁 {cat_name} ({cat_info['file_count']} files):")
+                    _show_category_files(cat_info["path"], min(limit, 10))  # Smaller limit for overview
+                    
+    except Exception as e:
+        logger.error(f"Error listing files: {e}", "cli")
+        interface.print_error(f"Error listing files: {e}")
+        sys.exit(1)
+
+
+def _show_category_files(folder_path: str, limit: int):
+    """Helper function to show files in a category folder."""
+    try:
+        if not os.path.exists(folder_path):
+            interface.print_warning("   Folder does not exist")
+            return
+            
+        files = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
+        
+        if not files:
+            interface.print_info("   No files found")
+            return
+            
+        files.sort(key=lambda f: os.path.getmtime(os.path.join(folder_path, f)), reverse=True)
+        
+        files_table = Table(border_style="dim")
+        files_table.add_column("File", style="white", width=40)
+        files_table.add_column("Size", style="magenta", width=12)
+        files_table.add_column("Modified", style="cyan", width=15)
+        
+        for file in files[:limit]:
+            file_path = os.path.join(folder_path, file)
+            try:
+                size = os.path.getsize(file_path)
+                mtime = os.path.getmtime(file_path)
+                mod_time = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+                
+                # Truncate long filenames
+                display_name = file
+                if len(display_name) > 37:
+                    display_name = display_name[:34] + "..."
+                    
+                files_table.add_row(display_name, format_size(size), mod_time)
+            except OSError:
+                files_table.add_row(file, "Error", "Error")
+                
+        console.print(files_table)
+        
+        if len(files) > limit:
+            interface.print_info(f"   ... and {len(files) - limit} more files")
+            
+    except OSError as e:
+        interface.print_warning(f"   Error reading folder: {e}")
+
+
+@folders.command()
+@click.confirmation_option(prompt="This will remove empty category folders. Continue?")
+def cleanup_empty():
+    """Remove empty category folders."""
+    try:
+        config = get_config()
+        folder_manager = FolderManager(config.config.folders.custom_download_dir)
+        
+        interface.print_info("🧹 Cleaning up empty category folders...")
+        results = folder_manager.cleanup_empty_folders()
+        
+        if results["removed"] > 0:
+            interface.print_success(f"✅ Removed {results['removed']} empty folders")
+        else:
+            interface.print_info("ℹ️ No empty folders found")
+            
+        if results["errors"] > 0:
+            interface.print_warning(f"⚠️ {results['errors']} errors occurred during cleanup")
+            
+    except Exception as e:
+        logger.error(f"Error cleaning up folders: {e}", "cli")
+        interface.print_error(f"Error cleaning up folders: {e}")
+        sys.exit(1)
 
 
 @fetchx.command()
